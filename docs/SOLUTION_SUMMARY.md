@@ -30,21 +30,21 @@ overcounts every foreground pause.
 
 **How ClickHouse is used.** Interval derivation runs entirely in ClickHouse as
 array algebra over per-session event sequences — `arraySort`, `arraySplit`,
-`arrayFilter`, `arrayResize` — no cursor, no data leaving the database.
-`raw_events` is ordered `(video_session_id, event_timestamp_ms)` so each
-session is physically contiguous, and partitioned by session-start date so a
-session never splits across partitions.
+`arrayFilter`, `arrayResize`. `raw_events` is ordered
+`(video_session_id, event_timestamp_ms)` so each session is physically
+contiguous, and partitioned by session-start date so no session splits across
+partitions.
 
 The serving layer stores **minute deltas**, not a minute grid: two rows per
 interval regardless of duration, 31,521 rows against the 145,821 a per-minute
 explosion needs. Hourly checkpoints store absolute concurrency at each hour
 boundary, so a range query reads one checkpoint plus the deltas since — cost
 proportional to the range, not to retention. Ordering was chosen by
-measurement, not intuition: our first sort key put `minute` last and a
-one-hour query still read every row, because a predicate on a trailing key
-column cannot prune granules. `minute` now leads, with a `PROJECTION`
-preserving dimension-first access. Peak cannot be pre-aggregated — it is a max
-over a running total and is not additive across dimensions.
+measurement: our first sort key put `minute` last and a one-hour query still
+read every row, because a predicate on a trailing key column cannot prune
+granules. `minute` now leads, with a `PROJECTION` preserving dimension-first
+access. Peak cannot be pre-aggregated — it is a max over a running total, not
+additive across dimensions.
 
 Open sessions live in a **hot tier** computed at read time from a
 `ReplacingMergeTree`, bounded by concurrency rather than retention. A late
@@ -63,4 +63,4 @@ audience removed**, and 26.6% for live content on Android phones.
 ClickStack traces the pipeline into ClickHouse. Everything runs on ClickHouse
 Cloud (Mumbai).
 
-*(497 words)*
+*(492 words)*
