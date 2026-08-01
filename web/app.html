@@ -545,11 +545,12 @@ svg g.bar rect + rect, .rejrow .rbar span {
 .plist { list-style: none; margin: 0; padding: 0; font-size: var(--t-sm); }
 .plist li { padding: 2px 0; color: var(--ink-2); }
 .plist .muted { color: var(--ink-3); }
-table.kv2 { width: 100%; }
+table.kv2 { width: 100%; table-layout: fixed; }
 table.kv2 td { border: 0; padding: 4px 0; text-align: left; }
 table.kv2 td.k { color: var(--ink-3); font-size: var(--t-sm); width: 45%; }
 table.kv2 td.v { color: var(--ink-1); font-size: var(--t-sm);
-  font-family: ui-monospace, monospace; word-break: break-all; }
+  font-family: ui-monospace, monospace; word-break: break-all;
+  overflow-wrap: anywhere; white-space: normal; }
 .faultlist { max-height: 300px; overflow: auto; }
 .fitem { display: grid; grid-template-columns: 132px 1fr; gap: 10px; padding: 3px 0;
   font-size: var(--t-cap); align-items: baseline; }
@@ -562,6 +563,48 @@ table.kv2 td.v { color: var(--ink-1); font-size: var(--t-sm);
   border-radius: var(--r-sm); padding: 8px 10px; }
 .cmdrow code { flex: 1; font-size: var(--t-sm); color: var(--ink-1);
   overflow-x: auto; white-space: nowrap; background: none; border: 0; padding: 0; }
+
+
+/* --- overflow containment -------------------------------------------------
+   Nothing may render outside its card. Flex and grid children default to
+   min-width:auto, which lets a long unbroken token (a session id, a file
+   path, a category name) push a track wider than its container instead of
+   shrinking -- so every track that holds text gets min-width:0 explicitly.
+   Popovers are deliberately NOT clipped: they are meant to escape the card. */
+.card { overflow: visible; min-width: 0; }
+.card > .body { min-width: 0; overflow-wrap: anywhere; }
+.card > header { min-width: 0; }
+.card > header h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+
+/* single-line labels truncate rather than escape */
+.lhead > span, .alert .ttl, .fitem code, .fitem span, .rejrow .rlbl,
+.chip b, .chip .k, .crumb .desc, .stat-inline, .side nav button span,
+.side .wordmark b, .side .wordmark span, .plist li, .cmdlabel {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.plist li { white-space: normal; overflow-wrap: anywhere; }
+.alert { min-width: 0; }
+.alert .ttl { flex: 1 1 auto; }
+.tile .label, .tile .note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .value { overflow-wrap: anywhere; }
+
+/* wide content scrolls INSIDE its own box, never widening the page */
+.tablewrap { max-width: 100%; overflow: auto; }
+table { min-width: 0; }
+td, th { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+table.kv2 td, table.kv td { max-width: none; overflow: visible;
+  text-overflow: clip; }
+.cmdrow { min-width: 0; }
+.cmdrow code { min-width: 0; }
+.logs { max-width: 100%; }
+pre.code { max-width: 100%; }
+.fpanel { max-width: calc(100vw - 60px); }
+.flist { min-width: 0; }
+.frow .lbl { min-width: 0; }
+main, .main-col { min-width: 0; overflow-x: hidden; }
+.grid > * { min-width: 0; }
+svg { max-width: 100%; }
 
 /* --- states -------------------------------------------------------------- */
 .skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
@@ -2004,10 +2047,17 @@ function chartQoE(host, rows) {
     '" fill="var(--s2)" fill-opacity=".22" stroke="var(--s2)" stroke-width="1.5"/>' +
     '<circle cx="' + X(r.sessions) + '" cy="' + Y(r.rebuffers_per_session) +
     '" r="22" fill="transparent"/></g>').join("");
-  const labels = rows.slice(0, 4).map(r =>
-    '<text x="' + X(r.sessions) + '" y="' + (Y(r.rebuffers_per_session) - R(r.errors) - 5) +
-    '" text-anchor="middle" font-size="10" fill="var(--ink-2)">' + esc(r.platform) +
-    '</text>').join("");
+  // Anchor labels inward near the plot edges. A middle-anchored label on the
+  // rightmost bubble extends past the card; clamping the anchor keeps every
+  // label inside the frame without moving the data point.
+  const labels = rows.slice(0, 4).map(r => {
+    const cx = X(r.sessions);
+    const near = cx > W - m.r - 60 ? "end" : cx < m.l + 60 ? "start" : "middle";
+    const lx = near === "end" ? Math.min(cx, W - m.r) : near === "start" ? Math.max(cx, m.l) : cx;
+    return '<text x="' + lx + '" y="' + (Y(r.rebuffers_per_session) - R(r.errors) - 5) +
+      '" text-anchor="' + near + '" font-size="10" fill="var(--ink-2)">' +
+      esc(r.platform) + '</text>';
+  }).join("");
   host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '">' + grid + dots + labels +
     '<text x="' + (W - m.r) + '" y="' + (H - 8) + '" text-anchor="end" font-size="10" ' +
     'fill="var(--ink-3)">more sessions &#8594;</text>' +
