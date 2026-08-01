@@ -24,3 +24,8 @@ web/*.backup.html
 CLAUDE.md
 docs/REMARKS.md
 scripts/_check_oracle_parallel.py
+
+# Image preprocessing is done locally; only the output asset ships.
+scripts/prep_logo.py
+web/shots/*-source.*
+web/shots/sony.png
