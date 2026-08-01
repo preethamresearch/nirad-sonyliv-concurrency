@@ -70,6 +70,20 @@ h1 .hl{background:linear-gradient(180deg,transparent 62%,rgba(250,255,105,.35) 6
   text-overflow:ellipsis;white-space:nowrap}
 .sc .v.s2{color:#ff8b5c}.sc .v.s1{color:#66a9ee}.sc .v.g{color:#57d957}
 
+
+.badges{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:26px}
+.badges .eyebrow{margin-bottom:0}
+.trackbadge{display:inline-flex;align-items:center;gap:10px;font-size:12.5px;
+  letter-spacing:.09em;text-transform:uppercase;color:#c3c8d0;
+  border:1px solid rgba(250,255,105,.4);border-radius:999px;padding:6px 14px}
+.trackbadge b{color:#fff;font-weight:750;letter-spacing:-.01em;text-transform:none;
+  font-size:14px}
+.trackbadge .sep{width:1px;height:14px;background:rgba(255,255,255,.22)}
+/* The real mark when the asset is present; the wordmark disappears so the two
+   never sit side by side. onerror removes the img if the file is absent. */
+.tblogo{height:22px;width:auto;border-radius:4px;display:block}
+.trackbadge:has(.tblogo) .tbtext{display:none}
+
 /* ---------- sections ---------- */
 section{padding:92px 0}
 .tag{display:inline-block;font-size:12px;letter-spacing:.11em;text-transform:uppercase;
@@ -133,7 +147,13 @@ footer a{color:#c3c8d0}
 </div></div>
 
 <div class="hero"><div class="wrap">
-  <span class="eyebrow"><span class="dot"></span>Live on ClickHouse Cloud</span>
+  <div class="badges">
+    <span class="eyebrow"><span class="dot"></span>Live on ClickHouse Cloud</span>
+    <span class="trackbadge">
+      <img class="tblogo" src="/shots/sonyliv.png" alt="SonyLIV"
+           onerror="this.remove()">
+      <b class="tbtext">SonyLIV</b><span class="sep"></span>Track submission</span>
+  </div>
   <h1>An open app is <span class="hl">not a viewer</span>.</h1>
   <p class="sub">Peak concurrency sets ad inventory, CDN capacity and the price of the next
     rights package. Counting a session start-to-end also counts paused players, backgrounded

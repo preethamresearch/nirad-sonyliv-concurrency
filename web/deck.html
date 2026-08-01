@@ -105,6 +105,21 @@ li b,li strong{color:var(--ink)}
 .st em{color:#8f8f88;font-style:normal;font-size:11.5px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 
+
+/* Track lockup. Text, not a logo file: the sponsor's brand asset is not ours
+   to vendor into a public repository. Drop an official SVG into web/shots/
+   and swap the span for an <img> if one is provided. */
+.tracklock{display:inline-flex;align-items:center;gap:12px;margin-bottom:16px}
+.tl-brand{font-size:19px;font-weight:750;letter-spacing:-.02em;color:#fff;
+  border:1.5px solid var(--brand);border-radius:6px;padding:3px 11px;line-height:1.35}
+.tl-sep{width:1px;height:19px;background:#3a3c36}
+.tl-logo{height:34px;width:auto;border-radius:6px;display:block}
+.tracklock:has(.tl-logo) .tl-brand{display:none}
+.tl-meta{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#a9a9a1}
+.slidemark{position:absolute;left:60px;bottom:18px;font-size:11px;color:var(--muted);
+  letter-spacing:.05em}
+.title-slide .slidemark{color:#6f6f68;left:60px}
+
 /* screenshot slides */
 .shot{border:1px solid var(--hair);border-radius:8px;overflow:hidden;background:var(--plane);
   box-shadow:0 2px 10px rgba(0,0,0,.10)}
@@ -130,7 +145,12 @@ li b,li strong{color:var(--ink)}
   <div class="titlegrid">
     <div>
       <div class="rule"></div>
-      <div class="kicker" style="color:#a9a9a1">Watchhouse · Click-a-thon 2026 · SonyLIV track</div>
+      <div class="tracklock">
+        <img class="tl-logo" src="/shots/sonyliv.png" alt="SonyLIV" onerror="this.remove()">
+        <span class="tl-brand">SonyLIV</span>
+        <span class="tl-sep"></span>
+        <span class="tl-meta">Click-a-thon 2026 · Track submission</span>
+      </div>
       <h1>An open app is not a viewer.</h1>
       <p class="sub">Foreground-only concurrency at streaming scale, computed on ClickHouse.</p>
       <div class="titlestats">
@@ -184,6 +204,7 @@ li b,li strong{color:var(--ink)}
   </div>
   <p class="note">Every figure in this deck is measured on the provided dataset:
     905,558 events, 10,866 sessions, computed on ClickHouse Cloud.</p>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">2 / 15</div>
 </section>
 
@@ -211,6 +232,7 @@ li b,li strong{color:var(--ink)}
   </div>
   <p class="big" style="margin-top:6px">On a single platform slice the gap is wider still:
     <b>ANDROID_PHONE on live content — 448 naive against 329 actual, 26.6% removed.</b></p>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">3 / 15</div>
 </section>
 
@@ -242,6 +264,7 @@ li b,li strong{color:var(--ink)}
     <li>Open on heartbeats → <b>overcounts every foreground pause</b>, and 82% of
       foreground pauses keep emitting heartbeats.</li>
   </ul>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">4 / 15</div>
 </section>
 
@@ -269,6 +292,7 @@ li b,li strong{color:var(--ink)}
           most common way to overcount.</td></tr>
     </tbody>
   </table>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">5 / 15</div>
 </section>
 
@@ -298,6 +322,7 @@ li b,li strong{color:var(--ink)}
     <div class="fig"><div class="l">Throughput measured</div><div class="v s1">2,028</div>
       <div class="n2">events/s, one consumer, 6 partitions available</div></div>
   </div>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">6 / 15</div>
 </section>
 
@@ -320,6 +345,7 @@ li b,li strong{color:var(--ink)}
   <p class="big" style="margin-top:22px">Events are keyed by <code>video_session_id</code>, so
     every event for a session lands on the same partition. Session reconstruction is
     order-dependent per key — a round-robin partitioner would make ordering unrecoverable.</p>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">7 / 15</div>
 </section>
 
@@ -347,6 +373,7 @@ li b,li strong{color:var(--ink)}
   <p class="big" style="margin-top:20px"><b>Result on a file with shuffled, renamed, widened
     and missing columns:</b> 12 of 14 columns matched, 2 unrecognised ignored, 1 missing
     defaulted, 915 unparseable timestamps reported rather than silently zeroed.</p>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">8 / 15</div>
 </section>
 
@@ -377,6 +404,7 @@ li b,li strong{color:var(--ink)}
       <b>ZSTD(6) everywhere bought 0.4% for ~20% more insert CPU</b> — the aggressive-
       compression trap. Gorilla the server refuses outright: it is a float codec.</p>
   </div>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">9 / 15</div>
 </section>
 
@@ -398,6 +426,7 @@ li b,li strong{color:var(--ink)}
   <p class="big" style="margin-top:18px">Peaks are <b>not additive</b>: platform peaks sum to
     3,215 against a true peak of 3,090, because each platform peaks at a different minute.
     The dashboard states this rather than letting a reader add the column up.</p>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">10 / 15</div>
 </section>
 
@@ -423,6 +452,7 @@ li b,li strong{color:var(--ink)}
     <code>sony.pipeline_runs</code> — run id, inputs, row counts, timings. <b>No pipeline
     evidence, no credit</b>, so the evidence is a table you can query rather than a claim
     in a README.</p>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">11 / 15</div>
 </section>
 
@@ -447,6 +477,7 @@ li b,li strong{color:var(--ink)}
   <p class="note">Nothing precomputed, cached or baked in: full-range chart 823 ms / 1.98M rows,
     peak-day slice 541 ms, per-dimension breakdown 264 ms. Vanilla SVG — no CDN, no npm, no chart
     library, so venue wi-fi cannot break it.</p>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">12 / 15</div>
 </section>
 
@@ -468,6 +499,7 @@ li b,li strong{color:var(--ink)}
         and marks.</p>
     </div>
   </div>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">13 / 15</div>
 </section>
 
@@ -493,6 +525,7 @@ li b,li strong{color:var(--ink)}
   <p class="note" style="font-size:15px">Three counting bugs were found and fixed during
     development, all the same species: summing values that do not sum — distinct sessions
     across groups, and peaks across dimensions.</p>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n">14 / 15</div>
 </section>
 
