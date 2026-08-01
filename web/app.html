@@ -198,6 +198,11 @@ code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size
   border-radius: var(--r-sm); padding: 5px 7px; font-size: var(--t-sm);
 }
 .vr { width: 1px; height: 20px; background: var(--line); margin: 0 var(--sp-1); }
+.rangeout { font-size: var(--t-cap); color: var(--ink-3); white-space: nowrap;
+  font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; }
+.rangeout b { color: var(--ink-2); font-weight: 600; }
+.rangeout .dur { background: var(--surface); border: 1px solid var(--line);
+  border-radius: 999px; padding: 1px 8px; color: var(--ink-2); }
 .chips { display: flex; gap: var(--sp-1); flex-wrap: wrap; align-items: center; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-cap);
@@ -212,6 +217,58 @@ code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size
 .linkish { background: none; border: 0; cursor: pointer; color: var(--ink-2);
   font-size: var(--t-cap); text-decoration: underline; text-underline-offset: 3px; }
 .linkish:hover { color: var(--ink-1); }
+
+
+/* --- filter builder ------------------------------------------------------ */
+#ctl-filters > button { gap: 7px; }
+#ctl-filters .fico { opacity: .65; }
+#ctl-filters .badge, .fhead .badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px;
+  background: var(--focus); color: #fff; font-size: 10.5px; font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.fpanel {
+  position: absolute; z-index: 70; top: calc(100% + 6px); left: 0;
+  width: min(940px, calc(100vw - 60px));
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-pop); overflow: hidden;
+}
+.fpanel[hidden] { display: none; }
+.fgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1px; background: var(--line-2); }
+.fcol { background: var(--surface); padding: var(--sp-3); min-width: 0; }
+.fhead { display: flex; align-items: center; gap: 6px; font-size: var(--t-cap);
+  letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3);
+  font-weight: 620; margin-bottom: var(--sp-2); }
+.fsearch { width: 100%; margin-bottom: var(--sp-2); padding: 5px 8px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface-2); font-size: var(--t-sm); }
+.flist { max-height: 210px; overflow: auto; display: flex; flex-direction: column; gap: 1px; }
+.frow { display: flex; align-items: center; gap: 8px; width: 100%; border: 0;
+  background: none; cursor: pointer; padding: 5px 6px; border-radius: var(--r-sm);
+  text-align: left; font-size: var(--t-sm); color: var(--ink-1); }
+.frow:hover { background: var(--surface-2); }
+.frow .box { width: 13px; height: 13px; flex: none; border-radius: 3px;
+  border: 1.5px solid var(--line); background: var(--surface); }
+.frow .box.on { background: var(--focus); border-color: var(--focus);
+  box-shadow: inset 0 0 0 2px var(--surface); }
+.frow .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frow .n { margin-left: auto; color: var(--ink-3); font-size: var(--t-cap);
+  font-variant-numeric: tabular-nums; }
+.fmore { font-size: var(--t-micro); color: var(--ink-3); margin-top: 6px; }
+.fpred { border-top: 1px solid var(--line); background: var(--surface-2);
+  padding: var(--sp-3) var(--sp-4); }
+.fpred-h { font-size: var(--t-micro); letter-spacing: .1em; color: var(--ink-3);
+  margin-bottom: 4px; }
+.fpred pre { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: var(--t-sm); color: var(--ink-2); white-space: pre-wrap; line-height: 1.5; }
+.ffoot { display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4); border-top: 1px solid var(--line); }
+.fdone { background: var(--brand); color: var(--brand-ink); border: 1px solid rgba(0,0,0,.2);
+  border-radius: var(--r-sm); padding: 5px 14px; font-weight: 620; cursor: pointer;
+  font-size: var(--t-sm); }
+.fdone:hover { filter: brightness(.96); }
 
 /* --- content ------------------------------------------------------------- */
 main { padding: var(--sp-5); flex: 1 1 auto; }
@@ -354,11 +411,9 @@ svg { display: block; width: 100%; overflow: visible; }
 
     <div class="toolbar" id="filters">
       <div class="ctl" id="ctl-time"></div>
+      <span class="rangeout" id="rangeout" title="The window every figure on this page covers"></span>
       <span class="vr"></span>
-      <div class="ctl" id="ctl-platform"></div>
-      <div class="ctl" id="ctl-video_type"></div>
-      <div class="ctl" id="ctl-category"></div>
-      <div class="ctl" id="ctl-close_reason"></div>
+      <div class="ctl" id="ctl-filters"></div>
       <div class="chips" id="chips"></div>
       <button class="linkish" id="clear" hidden>Clear all</button>
     </div>
@@ -699,55 +754,178 @@ function menu(host, cap, current, rows, onPick, footer) {
 }
 document.addEventListener("click", () => { if (openMenu) { openMenu.hidden = true; openMenu = null; } });
 
-function renderFilters() {
-  const cur = PRESETS.find(p => p.id === state.preset);
-  const m = menu($("#ctl-time"), "time", cur ? cur.label : "Full range",
-    PRESETS.map(p => ({value:p.id, label:p.label, on: p.id===state.preset})),
-    v => { if (v !== "custom") { applyPreset(v); refresh(); } else { state.preset="custom"; renderFilters(); } },
-    state.preset === "custom" ? `<label style="font-size:12px;color:var(--ink-muted)">from
-        <input type="datetime-local" id="cf" value="${(state.from||OV.bounds[0]).replace(" ","T")}"></label>
-      <label style="font-size:12px;color:var(--ink-muted)">to
-        <input type="datetime-local" id="ct" value="${(state.to||OV.bounds[1]).replace(" ","T")}"></label>` : "");
-  if (state.preset === "custom") {
-    const commit = () => {
-      const f = m.querySelector("#cf").value, t = m.querySelector("#ct").value;
-      if (f && t) { state.from = f.replace("T"," ") + ":00".slice(f.length>16?3:0);
-                    state.to = t.replace("T"," ") + ":00".slice(t.length>16?3:0); refresh(); }
-    };
-    m.querySelectorAll("input").forEach(i => i.addEventListener("change", commit));
-  }
+/* =========================================================================
+   Filter builder.
+   Four separate dropdowns made every dimension look independent and hid the
+   fact that they compose. This is one entry point that shows the whole
+   predicate being built, because combining columns is precisely what the
+   storage engine underneath is good at -- LowCardinality dimensions in the
+   sort key mean an AND across four of them prunes granules rather than
+   scanning and discarding.
+   ========================================================================= */
+let _fpOpen = false;
+let _fpSearch = {};
+
+function activeFilterCount() {
+  let n = 0;
   const allowed = new Set((OV && OV.view_dims && OV.view_dims[state.tab]) || []);
+  for (const d of DIMS) if (allowed.has(d.key)) n += (state.sel[d.key] || []).length;
+  return n;
+}
+
+/* The predicate the current selection produces. Shown to the reader because a
+   filter UI that hides what it is asking for cannot be debugged -- and because
+   it makes the multi-column AND explicit, which is the thing the storage
+   engine underneath is actually good at. */
+function predicatePreview() {
+  const allowed = new Set((OV && OV.view_dims && OV.view_dims[state.tab]) || []);
+  const parts = [];
   for (const d of DIMS) {
-    const host = $("#ctl-" + d.key);
-    if (!host) continue;
-    // A control that this view cannot honour is REMOVED, not disabled: the
-    // backend declares what it supports and the UI obeys it, so the class of
-    // bug where a filter is offered and silently ignored cannot recur.
-    if (!allowed.has(d.key)) { host.innerHTML = ""; host.hidden = true; continue; }
-    host.hidden = false;
-    const vals = (FACETS && FACETS[d.key]) || [];
-    const sel = state.sel[d.key] || [];
-    const cap = sel.length === 0 ? "All" : sel.length === 1 ? sel[0] : sel.length + " selected";
-    const m = menu(host, d.label, cap,
-      vals.map(v => ({value: v.value, label: v.value, n: v.sessions,
-                      on: sel.includes(v.value)})),
-      v => toggleFilter(d.key, v));
-    if (sel.length) host.querySelector("button").classList.add("on");
+    if (!allowed.has(d.key)) continue;
+    const v = state.sel[d.key] || [];
+    if (!v.length) continue;
+    parts.push(v.length === 1
+      ? d.key + " = '" + v[0] + "'"
+      : d.key + " IN (" + v.map(x => "'" + x + "'").join(", ") + ")");
   }
+  return parts.length ? parts.join("\n  AND ") : "no predicate — full range";
+}
+
+/* Every figure on a page is scoped to a window, and a dashboard that does not
+   say which window is asking to be misread. States the RESOLVED range, not the
+   preset name: "Peak day" means nothing to someone reading a screenshot. */
+function renderRange() {
+  const el = $("#rangeout");
+  if (!el || !OV) return;
+  const from = state.from || OV.bounds[0];
+  const to   = state.to   || OV.bounds[1];
+  const a = new Date(String(from).replace(" ", "T") + "Z");
+  const b = new Date(String(to).replace(" ", "T") + "Z");
+  if (isNaN(a) || isNaN(b)) { el.textContent = ""; return; }
+  const mins = Math.max(0, Math.round((b - a) / 60000));
+  const dur = mins >= 1440 ? (mins / 1440).toFixed(mins % 1440 ? 1 : 0) + "d"
+            : mins >= 60   ? (mins / 60).toFixed(mins % 60 ? 1 : 0) + "h"
+            : mins + "m";
+  const f = d => d.toISOString().slice(0, 16).replace("T", " ");
+  el.innerHTML = "<b>" + esc(f(a)) + "</b> → <b>" + esc(f(b)) +
+    "</b> UTC <span class='dur'>" + esc(dur) + "</span>";
+}
+
+function renderFilterPanel() {
+  const host = $("#ctl-filters");
+  if (!host) return;
+  const allowed = (OV && OV.view_dims && OV.view_dims[state.tab]) || [];
+  if (!allowed.length) { host.innerHTML = ""; host.hidden = true; return; }
+  host.hidden = false;
+  const n = activeFilterCount();
+
+  const cols = allowed.map(key => {
+    const d = DIMS.find(x => x.key === key);
+    if (!d) return "";
+    const vals = (FACETS && FACETS[key]) || [];
+    const sel = state.sel[key] || [];
+    const q = (_fpSearch[key] || "").toLowerCase();
+    const shown = q ? vals.filter(v => v.value.toLowerCase().includes(q)) : vals;
+    const rows = shown.slice(0, 200).map(v =>
+      '<button class="frow" data-dim="' + key + '" data-val="' + esc(v.value) + '">' +
+        '<span class="box' + (sel.includes(v.value) ? " on" : "") + '"></span>' +
+        '<span class="lbl">' + esc(v.value) + '</span>' +
+        '<span class="n">' + fmt(v.sessions) + '</span></button>').join("");
+    return '<div class="fcol"><div class="fhead">' + esc(d.label) +
+      (sel.length ? '<span class="badge">' + sel.length + '</span>' : "") + '</div>' +
+      (vals.length > 8
+        ? '<input class="fsearch" data-dim="' + key + '" placeholder="Search…" value="' +
+          esc(_fpSearch[key] || "") + '">' : "") +
+      '<div class="flist">' + (rows || '<div class="empty">no values yet</div>') + '</div>' +
+      (shown.length > 200 ? '<div class="fmore">first 200 of ' + fmt(shown.length) + '</div>' : "") +
+      '</div>';
+  }).join("");
+
+  host.innerHTML =
+    '<button id="fbtn" class="' + (n ? "on" : "") + '">' +
+      '<span class="fico">☷</span><span>Filters</span>' +
+      (n ? '<span class="badge">' + n + '</span>' : "") +
+      '<span class="caret">▾</span></button>' +
+    '<div class="fpanel" ' + (_fpOpen ? "" : "hidden") + '>' +
+      '<div class="fgrid">' + cols + '</div>' +
+      '<div class="fpred"><div class="fpred-h">WHERE</div><pre>' +
+        esc(predicatePreview()) + '</pre></div>' +
+      '<div class="ffoot"><button class="linkish" id="fclear">Clear all</button>' +
+        '<span class="grow"></span>' +
+        '<button class="fdone" id="fdone">Done</button></div>' +
+    '</div>';
+
+  $("#fbtn").addEventListener("click", e => {
+    e.stopPropagation(); _fpOpen = !_fpOpen; renderFilterPanel();
+  });
+  const panel = host.querySelector(".fpanel");
+  if (!panel) return;
+  panel.addEventListener("click", e => e.stopPropagation());
+  panel.querySelectorAll(".frow").forEach(b =>
+    b.addEventListener("click", () => toggleFilter(b.dataset.dim, b.dataset.val)));
+  panel.querySelectorAll(".fsearch").forEach(inp =>
+    inp.addEventListener("input", () => {
+      _fpSearch[inp.dataset.dim] = inp.value;
+      renderFilterPanel();
+      const again = document.querySelector('.fsearch[data-dim="' + inp.dataset.dim + '"]');
+      if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+    }));
+  const fc = panel.querySelector("#fclear");
+  if (fc) fc.addEventListener("click", () => {
+    for (const d of DIMS) state.sel[d.key] = [];
+    refresh();
+  });
+  const fd = panel.querySelector("#fdone");
+  if (fd) fd.addEventListener("click", () => { _fpOpen = false; renderFilterPanel(); });
+}
+document.addEventListener("click", () => {
+  if (_fpOpen) { _fpOpen = false; renderFilterPanel(); }
+});
+
+function renderFilters() {
+  const allowed = new Set((OV && OV.view_dims && OV.view_dims[state.tab]) || []);
+  renderTimeControl();
+  renderRange();
+  renderFilterPanel();
   const chips = [];
   for (const d of DIMS) {
     if (!allowed.has(d.key)) continue;
     for (const v of (state.sel[d.key] || []))
-      chips.push(`<span class="chip"><span class="k">${esc(d.label)}</span>
-        <b>${esc(v)}</b>
-        <button data-d="${d.key}" data-v="${esc(v)}" aria-label="Remove">×</button></span>`);
+      chips.push('<span class="chip"><span class="k">' + esc(d.label) + '</span><b>' +
+        esc(v) + '</b><button data-d="' + d.key + '" data-v="' + esc(v) +
+        '" aria-label="Remove">×</button></span>');
   }
   $("#chips").innerHTML = chips.join("");
   $("#chips").querySelectorAll("button").forEach(b =>
     b.addEventListener("click", () => toggleFilter(b.dataset.d, b.dataset.v)));
   $("#clear").hidden = chips.length === 0;
-  $("#filters").style.display = allowed.size ? "" : "none";
 }
+
+function renderTimeControl() {
+  const cur = PRESETS.find(p => p.id === state.preset);
+  const m = menu($("#ctl-time"), "Range", cur ? cur.label : "Full range",
+    PRESETS.map(p => ({value: p.id, label: p.label, on: p.id === state.preset})),
+    v => { if (v !== "custom") { applyPreset(v); refresh(); }
+           else { state.preset = "custom"; renderFilters(); } },
+    state.preset === "custom"
+      ? '<label class="meta">From<input type="datetime-local" id="cf" value="' +
+        String(state.from || OV.bounds[0]).replace(" ", "T") + '"></label>' +
+        '<label class="meta">To<input type="datetime-local" id="ct" value="' +
+        String(state.to || OV.bounds[1]).replace(" ", "T") + '"></label>'
+      : "");
+  if (state.preset === "custom" && m) {
+    const commit = () => {
+      const f = m.querySelector("#cf"), t = m.querySelector("#ct");
+      if (f && t && f.value && t.value) {
+        state.from = f.value.replace("T", " ") + ":00";
+        state.to = t.value.replace("T", " ") + ":00";
+        refresh();
+      }
+    };
+    m.querySelectorAll("input").forEach(i => i.addEventListener("change", commit));
+  }
+}
+
 $("#clear").addEventListener("click", () => {
   for (const d of DIMS) state.sel[d.key] = [];
   refresh();
@@ -1661,9 +1839,7 @@ async function refresh() {
   try {
     const f = api("/api/facets").then(r => { if (mine===seq) FACETS = r.facets; });
     await (VIEWS[state.tab] || viewOverview)(main);
-    const g = main.querySelector(".grid");
-    if (g) g.insertAdjacentHTML("beforeend", storyFooter());
-    wireInfo(main); wireStory(main);
+    wireInfo(main);
     await f; if (mine===seq) renderFilters();
   } catch (e) {
     main.innerHTML = `<div class="card col-12"><p class="err">${esc(e.message)}</p></div>`;
