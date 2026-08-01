@@ -58,6 +58,7 @@ INTERVAL_DIMS = SHARED_DIMS + ("category", "close_reason")
 #: unit of analysis.
 VIEW_DIMS = {
     "overview":  ("platform", "video_type", "category"),
+    "liveops":   ("platform",),
     "ops":       ("platform", "video_type", "category", "close_reason"),
     "analyst":   ("platform", "video_type", "category"),
     "product":   ("platform", "video_type", "category", "close_reason"),
@@ -571,6 +572,126 @@ def playground(args):
     }
 
 
+
+def live_ops(args):
+    """Live-event operations view: is the stream healthy right now?
+
+    Every metric here is OBSERVED, not modelled. The dataset carries real
+    quality-of-experience signals that the concurrency model does not use --
+    VideoError, BufferStart/End, dropped-frames and ABR shifts -- and those are
+    what an operator acts on during a live event.
+
+    Deliberately NOT here: bandwidth, edge utilisation, requests/sec and
+    predicted load. There is no infra telemetry in this dataset, and a
+    capacity number invented to fill a tile is exactly the failure this
+    project exists to argue against.
+    """
+    lo, hi = bounds()
+    t0 = args.get("from") or lo
+    t1 = args.get("to") or hi
+    w = where_clause(args, dims=("platform",))
+    t_start = time.time()
+    lo_q, hi_q = q_ident(t0), q_ident(t1)
+
+    jobs = {
+        # concurrency now and at peak, over the selected window
+        "conc": f"""
+SELECT max(c) AS peak, argMax(toString(minute), c) AS peak_at, anyLast(c) AS current
+FROM (SELECT minute, sum(sum(delta)) OVER (ORDER BY minute) AS c
+      FROM sony.concurrency_delta_all
+      WHERE minute <= toDateTime({hi_q},'UTC') {w}
+      GROUP BY minute ORDER BY minute)
+WHERE minute >= toDateTime({lo_q},'UTC')""",
+        # session churn per minute -- opens and closes are the delta signs
+        "churn": f"""
+SELECT toString(minute) AS m,
+       sum(if(delta > 0, delta, 0))  AS opened,
+       sum(if(delta < 0, -delta, 0)) AS closed
+FROM sony.concurrency_delta_all
+WHERE minute BETWEEN toDateTime({lo_q},'UTC') AND toDateTime({hi_q},'UTC') {w}
+GROUP BY minute ORDER BY minute""",
+        # quality of experience, from raw events
+        "qoe": f"""
+SELECT countIf(event_type = 'VideoError')            AS errors,
+       countIf(event = 'BufferStart')                AS rebuffers,
+       countIf(event = 'dropped-frames')             AS dropped,
+       countIf(event = 'downshift')                  AS downshifts,
+       countIf(event = 'upshift')                    AS upshifts,
+       uniqExact(video_session_id)                   AS sessions,
+       uniqExactIf(video_session_id, event_type = 'VideoError') AS sessions_with_error,
+       uniqExactIf(video_session_id, event = 'BufferStart')     AS sessions_with_rebuffer
+FROM sony.raw_events
+WHERE event_time BETWEEN toDateTime({lo_q},'UTC') AND toDateTime({hi_q},'UTC') {w}""",
+        # how sessions ended -- evidence_gap is the inferred one
+        "closes": f"""
+SELECT close_reason, count() AS n
+FROM sony.session_active_intervals FINAL
+WHERE active_start <= toDateTime({hi_q},'UTC')
+  AND active_end   >= toDateTime({lo_q},'UTC') {w}
+GROUP BY close_reason""",
+        # which platforms are actually suffering, ranked by rate not volume
+        "platforms": f"""
+SELECT platform,
+       uniqExact(video_session_id) AS sessions,
+       countIf(event_type = 'VideoError') AS errors,
+       countIf(event = 'BufferStart')     AS rebuffers,
+       round(countIf(event = 'BufferStart') / greatest(uniqExact(video_session_id),1), 2)
+         AS rebuffers_per_session,
+       round(countIf(event = 'dropped-frames')
+             / greatest(uniqExact(video_session_id),1), 2) AS dropped_per_session
+FROM sony.raw_events
+WHERE event_time BETWEEN toDateTime({lo_q},'UTC') AND toDateTime({hi_q},'UTC') {w}
+GROUP BY platform ORDER BY rebuffers_per_session DESC""",
+        # error timeline, so a spike is locatable in time
+        "errtl": f"""
+SELECT toString(toStartOfMinute(event_time)) AS m,
+       countIf(event_type = 'VideoError') AS errors,
+       countIf(event = 'BufferStart')     AS rebuffers
+FROM sony.raw_events
+WHERE event_time BETWEEN toDateTime({lo_q},'UTC') AND toDateTime({hi_q},'UTC') {w}
+GROUP BY m HAVING errors + rebuffers > 0 ORDER BY m""",
+        # freshness: how far behind wall clock is the newest event we hold
+        "lag": "SELECT round(dateDiff('second', max(event_time), now64(3,'UTC')), 1) "
+               "FROM sony.raw_events",
+    }
+    res, rowcounts = parallel_queries(jobs)
+
+    def rows(key):
+        return [l.split(chr(9)) for l in res.get(key, "").splitlines() if l]
+
+    conc = rows("conc")[0] if rows("conc") else ["0", "", "0"]
+    q = rows("qoe")[0] if rows("qoe") else ["0"] * 8
+    qi = [int(x or 0) for x in q]
+    sessions = max(qi[5], 1)
+
+    churn = [{"minute": m, "opened": int(o), "closed": int(c)} for m, o, c in rows("churn")]
+    errtl = [{"minute": m, "errors": int(e), "rebuffers": int(r)} for m, e, r in rows("errtl")]
+    closes = {r[0]: int(r[1]) for r in rows("closes")}
+    total_closes = max(sum(closes.values()), 1)
+
+    platforms = [{"platform": p, "sessions": int(s), "errors": int(e),
+                  "rebuffers": int(rb), "rebuffers_per_session": float(rps),
+                  "dropped_per_session": float(dps)}
+                 for p, s, e, rb, rps, dps in rows("platforms")]
+
+    return {
+        "peak": int(conc[0] or 0), "peak_at": conc[1], "current": int(conc[2] or 0),
+        "sessions": qi[5],
+        "errors": qi[0], "error_rate_pct": round(qi[6] / sessions * 100, 2),
+        "rebuffers": qi[1], "rebuffer_rate_pct": round(qi[7] / sessions * 100, 2),
+        "rebuffers_per_session": round(qi[1] / sessions, 2),
+        "dropped_frames": qi[2], "downshifts": qi[3], "upshifts": qi[4],
+        "heartbeat_loss_pct": round(closes.get("evidence_gap", 0) / total_closes * 100, 2),
+        "backgrounded_pct": round(closes.get("backgrounded", 0) / total_closes * 100, 2),
+        "closes": closes,
+        "churn": churn, "error_timeline": errtl, "platforms": platforms,
+        "ingest_lag_s": float((res.get("lag") or "0").strip() or 0),
+        "latency_ms": round((time.time() - t_start) * 1000, 1),
+        "rows_read": sum(rowcounts.values()),
+        "window": [t0, t1],
+    }
+
+
 def overview():
     jobs = {
         "server":     "SELECT version()",
@@ -881,6 +1002,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, language(args))
             if u.path == "/api/catalog":
                 return self._send(200, {"queries": CATALOG})
+            if u.path == "/api/live_ops":
+                return self._send(200, live_ops(args))
             if u.path == "/api/pipeline_live":
                 return self._send(200, pipeline_live(args))
             if u.path == "/api/playground":

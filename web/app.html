@@ -300,6 +300,11 @@ td.strong { font-weight: 620; }
 .legend .key { display: inline-flex; align-items: center; gap: 6px; }
 .legend .swatch { width: 13px; height: 3px; border-radius: 2px; }
 .legend .swatch.box { width: 10px; height: 10px; border-radius: 2px; }
+.stackbar { display: flex; height: 26px; border-radius: 5px; overflow: hidden; gap: 2px; }
+.stackbar .seg { transition: opacity .15s; }
+.stackbar .seg:hover { opacity: .78; }
+.col-7{grid-column:span 7} .col-5{grid-column:span 5}
+@media (max-width:980px){ .col-7,.col-5{grid-column:span 12} }
 .note-inline { color: var(--ink-3); font-size: var(--t-cap); line-height: 1.6;
   margin: var(--sp-3) 0 0; }
 .tag { display: inline-block; font-size: var(--t-micro); padding: 2px 7px;
@@ -325,9 +330,11 @@ svg { display: block; width: 100%; overflow: visible; }
 <div class="app">
   <aside class="side">
     <div class="brand"><span class="mark"></span><b>Concurrency</b></div>
-    <div class="grp">Analytics</div>
+    <div class="grp">Monitor</div>
+    <nav id="nav-live"></nav>
+    <div class="grp">Metrics</div>
     <nav id="nav-main"></nav>
-    <div class="grp">Platform</div>
+    <div class="grp">Traces</div>
     <nav id="nav-plat"></nav>
     <div class="foot">
       <div><span class="dot"></span><span id="foot-host">connecting…</span></div>
@@ -373,21 +380,23 @@ const fmt1 = n => n == null ? "--" : n.toLocaleString(undefined,{minimumFraction
    previous step raises, and the sidebar numbers them so a first-time reader
    knows there is an order and where they are in it. */
 const TABS = [
-  {id:"overview", grp:"Analytics", name:"Concurrency",
-   desc:"Active concurrent sessions vs session-overlap baseline"},
-  {id:"ops",      grp:"Analytics", name:"Session Health",
+  {id:"liveops",  grp:"Monitor", name:"Live Operations",
+   desc:"Stream health during an event: churn, rebuffering, errors, ingest lag"},
+  {id:"overview", grp:"Metrics", name:"Concurrency",
+   desc:"Active concurrent sessions vs the session-overlap baseline"},
+  {id:"ops",      grp:"Metrics", name:"Session Health",
    desc:"Termination causes and inferred-vs-observed session closes"},
-  {id:"analyst",  grp:"Analytics", name:"Content",
+  {id:"analyst",  grp:"Metrics", name:"Content",
    desc:"Peak simultaneous viewers by title and category"},
-  {id:"product",  grp:"Analytics", name:"Audience",
+  {id:"product",  grp:"Metrics", name:"Audience",
    desc:"Watch time and engagement by platform"},
-  {id:"regions",  grp:"Analytics", name:"Languages",
+  {id:"regions",  grp:"Metrics", name:"Languages",
    desc:"Audio-language distribution and regional coverage"},
-  {id:"live",     grp:"Platform",  name:"Ingestion",
+  {id:"live",     grp:"Traces",  name:"Ingestion",
    desc:"Stream throughput, consumer lag, dead letter queue, schema registry"},
-  {id:"pipeline", grp:"Platform",  name:"Storage",
+  {id:"pipeline", grp:"Traces",  name:"Storage",
    desc:"Serving-layer footprint and query cost"},
-  {id:"arch",     grp:"Platform",  name:"Architecture",
+  {id:"arch",     grp:"Traces",  name:"Architecture",
    desc:"Component topology and SQL console"},
 ];
 
@@ -1022,13 +1031,22 @@ function renderFlow(host, rates) {
 /* Count-up on stat values. Short, eased, and skipped for non-numerics so it
    never mangles a label. */
 function countUp(el, to, fmtFn) {
-  const from = parseFloat((el.textContent || "").replace(/[^0-9.]/g, "")) || 0;
-  if (!isFinite(to)) { el.textContent = to; return; }
+  const f = fmtFn || fmt;
+  if (to == null || !isFinite(to)) { el.textContent = to == null ? "—" : to; return; }
+  // Write the real value FIRST. requestAnimationFrame is paused in a
+  // background tab, so an animation-only path leaves the tile showing its
+  // placeholder forever -- which is what an operator sees after switching
+  // away and back during a live event.
+  el.textContent = f(to);
+  if (document.hidden) return;
+  const from = parseFloat((el.dataset.v || "0")) || 0;
+  el.dataset.v = String(to);
+  if (from === to) return;
   const t0 = performance.now(), dur = 420;
   function step(now) {
     const p = Math.min(1, (now - t0) / dur);
     const e = 1 - Math.pow(1 - p, 3);
-    el.textContent = (fmtFn || fmt)(Math.round(from + (to - from) * e));
+    el.textContent = f(Math.round(from + (to - from) * e));
     if (p < 1) requestAnimationFrame(step);
   }
   requestAnimationFrame(step);
@@ -1036,6 +1054,223 @@ function countUp(el, to, fmtFn) {
 
 let _liveTimer = null;
 function stopLive() { if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; } }
+
+/* ---- diverging churn: opens above the axis, closes below -------------- */
+function chartChurn(host, pts) {
+  if (!pts.length) { host.innerHTML = '<p class="empty">no session churn in this window</p>'; return; }
+  const W = host.clientWidth || 900, H = 190, mid = H / 2;
+  const max = Math.max(1, ...pts.map(p => Math.max(p.opened, p.closed)));
+  const bw = Math.max(0.7, W / pts.length);
+  const bars = pts.map((p, i) => {
+    const x = i * bw, ho = p.opened / max * (mid - 14), hc = p.closed / max * (mid - 14);
+    return '<g class="ch"><rect x="' + x + '" y="' + (mid - ho) + '" width="' +
+      Math.max(0.7, bw - .4) + '" height="' + ho + '" fill="var(--s1)"/>' +
+      '<rect x="' + x + '" y="' + mid + '" width="' + Math.max(0.7, bw - .4) +
+      '" height="' + hc + '" fill="var(--s2)"/></g>';
+  }).join("");
+  host.innerHTML = '<div class="legend">' +
+    '<span class="key"><span class="swatch box" style="background:var(--s1)"></span>sessions opened</span>' +
+    '<span class="key"><span class="swatch box" style="background:var(--s2)"></span>sessions closed</span>' +
+    '<span class="key">peak ' + fmt(max) + '/min</span></div>' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '">' +
+    '<line x1="0" x2="' + W + '" y1="' + mid + '" y2="' + mid + '" stroke="var(--line)"/>' +
+    bars + '<rect id="churnhit" x="0" y="0" width="' + W + '" height="' + H +
+    '" fill="transparent"/></svg>';
+  const svg = host.querySelector("svg");
+  const hit = svg.querySelector("#churnhit");
+  hit.addEventListener("pointermove", ev => {
+    const bb = svg.getBoundingClientRect();
+    const i = Math.max(0, Math.min(pts.length - 1,
+      Math.floor((ev.clientX - bb.left) / bb.width * W / bw)));
+    const p = pts[i];
+    showTip(ev.clientX, ev.clientY,
+      '<div class="when">' + esc(p.minute) + ' UTC</div>' +
+      '<div class="r"><span class="k" style="background:var(--s1)"></span><span class="v">' +
+      fmt(p.opened) + '</span><span class="n">opened</span></div>' +
+      '<div class="r"><span class="k" style="background:var(--s2)"></span><span class="v">' +
+      fmt(p.closed) + '</span><span class="n">closed</span></div>' +
+      '<div class="r"><span class="k" style="background:transparent"></span><span class="v">' +
+      fmt(p.opened - p.closed) + '</span><span class="n">net</span></div>');
+  });
+  hit.addEventListener("pointerleave", hideTip);
+}
+
+/* ---- QoE scatter: volume vs experience, bubble size = errors ---------- */
+function chartQoE(host, rows) {
+  if (!rows.length) { host.innerHTML = '<p class="empty">no platform data</p>'; return; }
+  const W = host.clientWidth || 520, H = 300, m = {t:14, r:18, b:38, l:52};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const maxX = Math.max(...rows.map(r => r.sessions), 1);
+  const maxY = Math.max(...rows.map(r => r.rebuffers_per_session), 1);
+  const maxE = Math.max(...rows.map(r => r.errors), 1);
+  // sqrt on X: session counts are heavily skewed toward one platform, and a
+  // linear axis would pile nine platforms into the left margin.
+  const X = v => m.l + Math.sqrt(v / maxX) * iw;
+  const Y = v => m.t + ih - (v / maxY) * ih;
+  const R = v => 5 + Math.sqrt(v / maxE) * 15;
+  const grid = [0, .25, .5, .75, 1].map(f => {
+    const y = m.t + ih - f * ih;
+    return '<line x1="' + m.l + '" x2="' + (W - m.r) + '" y1="' + y + '" y2="' + y +
+      '" stroke="var(--line-2)"/><text x="' + (m.l - 8) + '" y="' + (y + 4) +
+      '" text-anchor="end" font-size="10" fill="var(--ink-3)">' +
+      (maxY * f).toFixed(1) + '</text>';
+  }).join("");
+  const dots = rows.map((r, i) =>
+    '<g class="qd" data-i="' + i + '"><circle cx="' + X(r.sessions) + '" cy="' +
+    Y(r.rebuffers_per_session) + '" r="' + R(r.errors) +
+    '" fill="var(--s2)" fill-opacity=".22" stroke="var(--s2)" stroke-width="1.5"/>' +
+    '<circle cx="' + X(r.sessions) + '" cy="' + Y(r.rebuffers_per_session) +
+    '" r="22" fill="transparent"/></g>').join("");
+  const labels = rows.slice(0, 4).map(r =>
+    '<text x="' + X(r.sessions) + '" y="' + (Y(r.rebuffers_per_session) - R(r.errors) - 5) +
+    '" text-anchor="middle" font-size="10" fill="var(--ink-2)">' + esc(r.platform) +
+    '</text>').join("");
+  host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '">' + grid + dots + labels +
+    '<text x="' + (W - m.r) + '" y="' + (H - 8) + '" text-anchor="end" font-size="10" ' +
+    'fill="var(--ink-3)">more sessions &#8594;</text>' +
+    '<text x="10" y="' + (m.t + 8) + '" font-size="10" fill="var(--ink-3)">rebuffers/session</text>' +
+    '</svg><p class="note-inline">Bubble size is total errors. Up and to the right is the ' +
+    'worst place to be: many viewers, poor experience. X uses a square-root scale because ' +
+    'session counts are heavily skewed toward one platform.</p>';
+  host.querySelectorAll(".qd").forEach(g => {
+    const r = rows[+g.dataset.i];
+    g.style.cursor = "pointer";
+    g.addEventListener("pointermove", ev => showTip(ev.clientX, ev.clientY,
+      '<div class="when">' + esc(r.platform) + '</div>' +
+      '<div class="r"><span class="k" style="background:var(--s2)"></span><span class="v">' +
+      r.rebuffers_per_session + '</span><span class="n">rebuffers/session</span></div>' +
+      '<div class="r"><span class="k" style="background:transparent"></span><span class="v">' +
+      fmt(r.sessions) + '</span><span class="n">sessions</span></div>' +
+      '<div class="r"><span class="k" style="background:transparent"></span><span class="v">' +
+      fmt(r.errors) + '</span><span class="n">errors</span></div>' +
+      '<div class="r"><span class="k" style="background:transparent"></span><span class="v">' +
+      r.dropped_per_session + '</span><span class="n">dropped frames/session</span></div>'));
+    g.addEventListener("pointerleave", hideTip);
+    g.addEventListener("click", () => toggleFilter("platform", r.platform));
+  });
+}
+
+/* ---- two-series incident timeline ------------------------------------ */
+function chartIncidents(host, pts) {
+  if (!pts.length) { host.innerHTML = '<p class="empty">no errors or rebuffering in this window</p>'; return; }
+  const W = host.clientWidth || 900, H = 170, m = {t:10, r:10, b:20, l:44};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b, n = pts.length;
+  const max = Math.max(1, ...pts.map(p => Math.max(p.errors, p.rebuffers)));
+  const X = i => m.l + (n < 2 ? iw/2 : i/(n-1)*iw);
+  const Y = v => m.t + ih - (v/max)*ih;
+  const line = k => pts.map((p,i) => (i?"L":"M") + X(i).toFixed(1) + " " + Y(p[k]).toFixed(1)).join(" ");
+  host.innerHTML = '<div class="legend">' +
+    '<span class="key"><span class="swatch" style="background:var(--s4)"></span>rebuffer starts</span>' +
+    '<span class="key"><span class="swatch" style="background:var(--crit)"></span>playback errors</span>' +
+    '<span class="key">peak ' + fmt(max) + '/min</span></div>' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '">' +
+    '<path d="' + line('rebuffers') + '" fill="none" stroke="var(--s4)" stroke-width="1.6"/>' +
+    '<path d="' + line('errors') + '" fill="none" stroke="var(--crit)" stroke-width="2"/>' +
+    '<line id="xh" y1="' + m.t + '" y2="' + (m.t+ih) + '" stroke="var(--ink-3)" stroke-width="1" style="display:none"/>' +
+    '<rect x="' + m.l + '" y="' + m.t + '" width="' + iw + '" height="' + ih +
+    '" fill="transparent" id="ihit"/></svg>';
+  const svg = host.querySelector("svg"), xh = svg.querySelector("#xh");
+  const hit = svg.querySelector("#ihit");
+  hit.addEventListener("pointermove", ev => {
+    const bb = svg.getBoundingClientRect();
+    let i = Math.round(((ev.clientX - bb.left)/bb.width*W - m.l)/(iw||1)*(n-1));
+    i = Math.max(0, Math.min(n-1, i));
+    xh.style.display = ""; xh.setAttribute("x1", X(i)); xh.setAttribute("x2", X(i));
+    showTip(ev.clientX, ev.clientY,
+      '<div class="when">' + esc(pts[i].minute) + ' UTC</div>' +
+      '<div class="r"><span class="k" style="background:var(--s4)"></span><span class="v">' +
+      fmt(pts[i].rebuffers) + '</span><span class="n">rebuffers</span></div>' +
+      '<div class="r"><span class="k" style="background:var(--crit)"></span><span class="v">' +
+      fmt(pts[i].errors) + '</span><span class="n">errors</span></div>');
+  });
+  hit.addEventListener("pointerleave", () => { hideTip(); xh.style.display = "none"; });
+}
+
+/* ---- 100% stacked bar for close-reason mix --------------------------- */
+function chartStack(host, obj) {
+  const entries = Object.entries(obj).sort((a,b) => b[1]-a[1]);
+  const total = entries.reduce((a,kv) => a+kv[1], 0) || 1;
+  const colors = ["--s1","--s3","--s4","--crit","--s5"];
+  const segs = entries.map((kv,i) =>
+    '<div class="seg" style="width:' + (kv[1]/total*100) + '%;background:var(' +
+    colors[i%colors.length] + ')" title="' + esc(kv[0]) + ': ' + fmt(kv[1]) + '"></div>').join("");
+  host.innerHTML = '<div class="stackbar">' + segs + '</div>' +
+    '<div class="legend" style="margin-top:10px">' + entries.map((kv,i) =>
+      '<span class="key"><span class="swatch box" style="background:var(' +
+      colors[i%colors.length] + ')"></span>' + esc(kv[0]) +
+      ' <b style="color:var(--ink-1)">' + (kv[1]/total*100).toFixed(1) + '%</b></span>').join("") +
+    '</div>';
+}
+
+async function viewLiveOps(main) {
+  main.innerHTML = '<div class="grid" id="g">' +
+    tile("Concurrent now", "&hellip;", "at window end") +
+    tile("Peak", "&hellip;", "in window", "s1") +
+    tile("Rebuffer rate", "&hellip;", "of sessions affected") +
+    tile("Error rate", "&hellip;", "of sessions affected") +
+    card("Session churn",
+      "Opens and closes per minute, drawn from the delta stream itself — the +1 and −1 " +
+      "that build the concurrency curve. Net churn is what capacity has to absorb.",
+      '<div id="churn">' + skeleton(3) + '</div>', "col-12") +
+    card("Incidents over time",
+      "Rebuffer starts and playback errors per minute, so a spike is locatable in time " +
+      "rather than only visible as a total.",
+      '<div id="incidents">' + skeleton(3) + '</div>', "col-7") +
+    card("Experience by platform",
+      "Volume against experience, bubble size by error count. Click a bubble to scope the page.",
+      '<div id="qoe">' + skeleton(4) + '</div>', "col-5") +
+    card("How sessions ended",
+      "evidence_gap is inferred from client silence; every other reason is explicitly observed.",
+      '<div id="stack">' + skeleton(2) + '</div>', "col-7") +
+    card("Signal quality",
+      "Degradation signals the concurrency model deliberately does not use, but which an " +
+      "operator acts on during a live event.",
+      '<div id="sig">' + skeleton(4) + '</div>', "col-5") +
+    card("Platform detail", "Sortable. Click a row to scope the page to that platform.",
+      '<div id="ptbl">' + skeleton(4) + '</div>', "col-12") +
+    '</div>';
+
+  const d = await api("/api/live_ops");
+  const g = $("#g").children;
+  countUp(g[0].querySelector(".value"), d.current);
+  countUp(g[1].querySelector(".value"), d.peak);
+  g[1].querySelector(".note").textContent = "peak at " + (d.peak_at || "—");
+
+  const rb = g[2].querySelector(".value");
+  rb.textContent = d.rebuffer_rate_pct + "%";
+  rb.className = "value " + (d.rebuffer_rate_pct > 40 ? "crit" : d.rebuffer_rate_pct > 15 ? "" : "good");
+  g[2].querySelector(".note").textContent =
+    fmt(d.rebuffers) + " starts · " + d.rebuffers_per_session + " per session";
+
+  const er = g[3].querySelector(".value");
+  er.textContent = d.error_rate_pct + "%";
+  er.className = "value " + (d.error_rate_pct > 5 ? "crit" : d.error_rate_pct > 1 ? "" : "good");
+  g[3].querySelector(".note").textContent = fmt(d.errors) + " VideoError events";
+
+  chartChurn($("#churn"), d.churn);
+  chartIncidents($("#incidents"), d.error_timeline);
+  chartQoE($("#qoe"), d.platforms);
+  chartStack($("#stack"), d.closes);
+
+  $("#sig").innerHTML = '<table><tbody>' +
+    '<tr><td>Dropped frames</td><td class="strong">' + fmt(d.dropped_frames) + '</td></tr>' +
+    '<tr><td>Bitrate downshifts</td><td class="strong">' + fmt(d.downshifts) + '</td></tr>' +
+    '<tr><td>Bitrate upshifts</td><td class="strong">' + fmt(d.upshifts) + '</td></tr>' +
+    '<tr><td>Heartbeat loss (inferred close)</td><td class="strong">' + d.heartbeat_loss_pct + '%</td></tr>' +
+    '<tr><td>Backgrounded</td><td class="strong">' + d.backgrounded_pct + '%</td></tr>' +
+    '<tr><td>Ingest lag</td><td class="strong">' + fmt1(d.ingest_lag_s) + ' s</td></tr>' +
+    '</tbody></table>';
+
+  renderTable($("#ptbl"), d.platforms.map(r => ({...r, value: r.platform})), [
+    {k:"value", t:"platform"},
+    {k:"sessions", t:"sessions"},
+    {k:"rebuffers", t:"rebuffer starts"},
+    {k:"rebuffers_per_session", t:"per session", f:fmt1},
+    {k:"errors", t:"errors"},
+    {k:"dropped_per_session", t:"dropped/session", f:fmt1, dim:true},
+  ], "platform");
+  perf(d);
+}
 
 async function viewLive(main) {
   main.innerHTML = `<div class="grid" id="g">
@@ -1371,7 +1606,7 @@ async function viewRegions(main) {
 
 const VIEWS = {overview:viewOverview, ops:viewOps, analyst:viewAnalyst,
                product:viewProduct, regions:viewRegions, pipeline:viewPipeline,
-               live:viewLive, arch:viewArchitecture};
+               live:viewLive, arch:viewArchitecture, liveops:viewLiveOps};
 
 function perf(r) {
   if (!r) return;
@@ -1380,7 +1615,7 @@ function perf(r) {
 
 /* --- orchestration ------------------------------------------------------ */
 function renderNav() {
-  for (const [grp, host] of [["Analytics", "#nav-main"], ["Platform", "#nav-plat"]]) {
+  for (const [grp, host] of [["Monitor", "#nav-live"], ["Metrics", "#nav-main"], ["Traces", "#nav-plat"]]) {
     $(host).innerHTML = TABS.filter(t => t.grp === grp).map(t =>
       `<button data-t="${t.id}" ${t.id === state.tab ? 'aria-current="page"' : ""}>
          <span>${esc(t.name)}</span></button>`).join("");
