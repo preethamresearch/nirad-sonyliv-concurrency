@@ -439,6 +439,31 @@ pre.code { margin: 0 0 10px; padding: 10px 12px; background: var(--surface);
   white-space: pre; }
 .ldetail { padding: 8px 6px 4px 24px; }
 
+
+/* --- pagination bar (shared by logs, alerts, tables) --------------------- */
+.logbar { display: flex; align-items: center; gap: 6px; padding: 0 0 8px;
+  border-bottom: 1px solid var(--line-2); margin-bottom: 8px; }
+.logbar .grow { flex: 1; }
+.ltab { background: none; border: 1px solid transparent; border-radius: 999px;
+  padding: 2px 10px; font-size: var(--t-cap); color: var(--ink-3); cursor: pointer; }
+.ltab:hover { color: var(--ink-1); }
+.ltab.on { background: var(--surface-2); border-color: var(--line); color: var(--ink-1);
+  font-weight: 600; }
+.pageinfo { font-size: var(--t-cap); color: var(--ink-3);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pg { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
+  width: 24px; height: 22px; cursor: pointer; color: var(--ink-2); line-height: 1; }
+.pg:hover:not(:disabled) { border-color: var(--focus); color: var(--focus); }
+.pg:disabled { opacity: .35; cursor: default; }
+.acount { font-size: var(--t-cap); color: var(--ink-3); }
+/* --- rejects bars -------------------------------------------------------- */
+.rejrow { display: grid; grid-template-columns: 120px 1fr auto; gap: 10px;
+  align-items: center; padding: 4px 0; font-size: var(--t-sm); }
+.rejrow .rlbl { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.rejrow .rbar { height: 9px; background: var(--line-2); border-radius: 5px; overflow: hidden; }
+.rejrow .rbar span { display: block; height: 100%; background: var(--warn); }
+.rejrow .rval { font-variant-numeric: tabular-nums; color: var(--ink-1); font-weight: 600; }
+
 /* --- states -------------------------------------------------------------- */
 .skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
   var(--line-2) 63%); background-size: 400% 100%;
@@ -778,7 +803,11 @@ function chartTileMap(host, rows) {
 
 /* Sortable table -- the rows behind the curve, and the keyboard path to
    every value a tooltip shows. */
+const TABLE_PAGE = 15;
+const _tablePage = new Map();     // keyed by host element id, so pages survive re-render
+
 function renderTable(host, rows, cols, dimKey) {
+  const key = host.id || "t";
   const st = state.sort;
   const sorted = rows.slice().sort((x, y) => {
     const p = x[st.col], q = y[st.col];
@@ -786,26 +815,48 @@ function renderTable(host, rows, cols, dimKey) {
     if (q == null) return -1;
     return (typeof p === "string" ? p.localeCompare(q) : p - q) * st.dir;
   });
-  // Filtering is an explicit control, not a hidden behaviour of the whole row.
-  // A row that silently becomes a filter is undiscoverable, and it fires by
-  // accident when someone is trying to select text.
+  const pages = Math.max(1, Math.ceil(sorted.length / TABLE_PAGE));
+  let page = _tablePage.get(key) || 0;
+  if (page >= pages) { page = pages - 1; _tablePage.set(key, page); }
+  const start = page * TABLE_PAGE;
+  const slice = sorted.slice(start, start + TABLE_PAGE);
   const canFilter = !!dimKey;
-  host.innerHTML = '<div class="tablewrap"><table><thead><tr>' +
-    cols.map(c => '<th data-c="' + c.k + '">' + esc(c.t) +
-      (st.col === c.k ? (st.dir < 0 ? " ↓" : " ↑") : "") + '</th>').join("") +
-    (canFilter ? '<th class="actcol"></th>' : "") + '</tr></thead><tbody>' +
-    sorted.map(r => {
-      const on = canFilter && (state.sel[dimKey] || []).includes(String(r.value));
-      return '<tr' + (on ? ' class="rowon"' : '') + '>' +
-        cols.map(c => '<td class="' + (c.dim ? "dim" : "") + '">' +
-          (c.f ? c.f(r[c.k], r) : fmt(r[c.k])) + '</td>').join("") +
-        (canFilter ? '<td class="actcol"><button class="rowfilter' + (on ? " on" : "") +
-          '" data-v="' + esc(String(r.value)) + '">' +
-          (on ? "✓ filtered" : "filter") + '</button></td>' : "") + '</tr>';
-    }).join("") + '</tbody></table></div>';
+
+  // Filtering is an explicit control, not a hidden behaviour of the whole row:
+  // a row that silently becomes a filter is undiscoverable and fires by
+  // accident when someone is selecting text.
+  host.innerHTML =
+    (sorted.length > TABLE_PAGE
+      ? '<div class="logbar"><span class="pageinfo">' + (start + 1) + '–' +
+          Math.min(start + TABLE_PAGE, sorted.length) + ' of ' + fmt(sorted.length) +
+        '</span><span class="grow"></span>' +
+        '<button class="pg" data-d="-1"' + (page === 0 ? " disabled" : "") + '>‹</button>' +
+        '<button class="pg" data-d="1"' + (page >= pages - 1 ? " disabled" : "") + '>›</button>' +
+        '</div>'
+      : "") +
+    '<div class="tablewrap"><table><thead><tr>' +
+      cols.map(c => '<th data-c="' + c.k + '">' + esc(c.t) +
+        (st.col === c.k ? (st.dir < 0 ? " ↓" : " ↑") : "") + '</th>').join("") +
+      (canFilter ? '<th class="actcol"></th>' : "") + '</tr></thead><tbody>' +
+      slice.map(r => {
+        const on = canFilter && (state.sel[dimKey] || []).includes(String(r.value));
+        return '<tr' + (on ? ' class="rowon"' : '') + '>' +
+          cols.map(c => '<td class="' + (c.dim ? "dim" : "") + '">' +
+            (c.f ? c.f(r[c.k], r) : fmt(r[c.k])) + '</td>').join("") +
+          (canFilter ? '<td class="actcol"><button class="rowfilter' + (on ? " on" : "") +
+            '" data-v="' + esc(String(r.value)) + '">' +
+            (on ? "✓ filtered" : "filter") + '</button></td>' : "") + '</tr>';
+      }).join("") + '</tbody></table></div>';
+
   host.querySelectorAll("th[data-c]").forEach(th => th.addEventListener("click", () => {
     const c = th.dataset.c;
     state.sort = {col: c, dir: st.col === c ? -st.dir : -1};
+    _tablePage.set(key, 0);                 // a new sort starts at the first page
+    renderTable(host, rows, cols, dimKey);
+  }));
+  host.querySelectorAll(".pg").forEach(b => b.addEventListener("click", () => {
+    if (b.disabled) return;
+    _tablePage.set(key, page + (+b.dataset.d));
     renderTable(host, rows, cols, dimKey);
   }));
   host.querySelectorAll(".rowfilter").forEach(bt =>
@@ -1437,64 +1488,159 @@ function chartBatches(host, batches) {
   });
 }
 
-function renderAlerts(host, alerts) {
-  if (!alerts.length) {
-    host.innerHTML = '<div class="ok-state">No alerts — every rule below threshold.</div>';
-    return;
-  }
-  host.innerHTML = alerts.map(a =>
-    '<div class="alert ' + a.level + '">' +
-      '<span class="lv">' + (a.level === "critical" ? "CRIT" : "WARN") + '</span>' +
-      '<span class="ttl">' + esc(a.title) + '</span>' +
-      '<span class="val">' + esc(String(a.value)) + esc(a.unit) + '</span>' +
-      '<span class="thr">threshold ' + esc(String(a.threshold)) + esc(a.unit) + '</span>' +
-    '</div>').join("");
+/* =========================================================================
+   Log viewer with pagination and stable state across polling.
+
+   The previous version re-rendered the whole list on every 6s poll, which
+   destroyed the expanded row AND reset scrollTop -- so opening an entry and
+   scrolling down was impossible: it snapped shut and jumped to the top before
+   you reached the bottom. Three things fix it:
+
+     1. Pagination, so a page is a bounded number of rows rather than the
+        whole stream.
+     2. A content signature -- if the data has not changed, do not touch the
+        DOM at all. Polling should be invisible when nothing happened.
+     3. Expanded rows are keyed by a stable id, not by index, and scrollTop is
+        restored, so a refresh that DOES change data keeps your place.
+   ========================================================================= */
+const LOG_PAGE = 12;
+const _logState = {page: 0, open: new Set(), sig: "", level: "all"};
+
+function logKey(l) {
+  return String(l.at) + "|" + l.src + "|" + (l.event || "") + "|" + (l.summary || "");
 }
 
 function renderLogs(host, logs) {
-  if (!logs.length) { host.innerHTML = '<p class="empty">no log lines</p>'; return; }
-  // Structured header, full record behind an accordion as indented JSON with
-  // a copy control. A dead letter exists precisely because the record had
-  // something unexpected in it, so the viewer must not assume a field list.
-  host.innerHTML = '<div class="logs">' + logs.map((l, i) =>
-    '<div class="logrow ' + l.level + '" data-i="' + i + '">' +
-      '<div class="lhead">' +
-        '<span class="chev">›</span>' +
-        '<span class="ts">' + esc(String(l.at).slice(0, 19)) + '</span>' +
-        '<span class="lvl">' + esc(l.level.toUpperCase()) + '</span>' +
-        '<span class="src">' + esc(l.src) + '</span>' +
-        '<span class="evt">' + esc(l.event || "") + '</span>' +
-        '<span class="sum">' + esc(l.summary || "") + '</span>' +
-        (l.where ? '<span class="where">' + esc(l.where) + '</span>' : "<span></span>") +
-        '<span class="nf">' + Object.keys(l.fields || {}).length + ' fields</span>' +
-      '</div>' +
-      '<div class="ldetail" hidden>' +
-        '<div class="codehead"><span>record</span>' +
-          '<button class="copybtn" data-i="' + i + '">Copy JSON</button></div>' +
-        '<pre class="code">' + esc(l.raw || "{}") + '</pre>' +
-      '</div>' +
-    '</div>').join("") + '</div>';
+  const filtered = _logState.level === "all"
+    ? logs : logs.filter(l => l.level === _logState.level);
+  const sig = _logState.level + ":" + filtered.length + ":" +
+              (filtered[0] ? logKey(filtered[0]) : "") + ":" + _logState.page;
+  if (sig === _logState.sig && host.querySelector(".logs")) return;  // nothing changed
+  _logState.sig = sig;
 
+  const pages = Math.max(1, Math.ceil(filtered.length / LOG_PAGE));
+  if (_logState.page >= pages) _logState.page = pages - 1;
+  const start = _logState.page * LOG_PAGE;
+  const slice = filtered.slice(start, start + LOG_PAGE);
+  const prevScroll = (host.querySelector(".logs") || {}).scrollTop || 0;
+
+  const counts = logs.reduce((a, l) => { a[l.level] = (a[l.level] || 0) + 1; return a; }, {});
+  const tabs = ["all", "error", "warn", "info"].map(lv =>
+    '<button class="ltab' + (_logState.level === lv ? " on" : "") + '" data-lv="' + lv + '">' +
+      esc(lv) + (lv === "all" ? " " + logs.length
+                              : " " + (counts[lv] || 0)) + '</button>').join("");
+
+  host.innerHTML =
+    '<div class="logbar">' + tabs + '<span class="grow"></span>' +
+      '<span class="pageinfo">' + (filtered.length ? (start + 1) : 0) + '\–' +
+        Math.min(start + LOG_PAGE, filtered.length) + ' of ' + filtered.length + '</span>' +
+      '<button class="pg" data-d="-1"' + (_logState.page === 0 ? " disabled" : "") + '>\‹</button>' +
+      '<button class="pg" data-d="1"' + (_logState.page >= pages - 1 ? " disabled" : "") + '>\›</button>' +
+    '</div>' +
+    '<div class="logs">' + (slice.length ? slice.map(l => {
+      const k = logKey(l), open = _logState.open.has(k);
+      return '<div class="logrow ' + l.level + (open ? " open" : "") + '" data-k="' + esc(k) + '">' +
+        '<div class="lhead">' +
+          '<span class="chev">\›</span>' +
+          '<span class="ts">' + esc(String(l.at).slice(0, 19)) + '</span>' +
+          '<span class="lvl">' + esc(l.level.toUpperCase()) + '</span>' +
+          '<span class="src">' + esc(l.src) + '</span>' +
+          '<span class="evt">' + esc(l.event || "") + '</span>' +
+          '<span class="sum">' + esc(l.summary || "") + '</span>' +
+          '<span class="where">' + esc(l.where || "") + '</span>' +
+          '<span class="nf">' + Object.keys(l.fields || {}).length + ' fields</span>' +
+        '</div>' +
+        '<div class="ldetail"' + (open ? "" : " hidden") + '>' +
+          '<div class="codehead"><span>record</span>' +
+            '<button class="copybtn">Copy JSON</button></div>' +
+          '<pre class="code">' + esc(l.raw || "{}") + '</pre>' +
+        '</div></div>';
+    }).join("") : '<p class="empty">no entries at this level</p>') + '</div>';
+
+  const box = host.querySelector(".logs");
+  if (box) box.scrollTop = prevScroll;
+
+  host.querySelectorAll(".ltab").forEach(b => b.addEventListener("click", () => {
+    _logState.level = b.dataset.lv; _logState.page = 0; _logState.sig = "";
+    renderLogs(host, logs);
+  }));
+  host.querySelectorAll(".pg").forEach(b => b.addEventListener("click", () => {
+    if (b.disabled) return;
+    _logState.page += (+b.dataset.d); _logState.sig = "";
+    renderLogs(host, logs);
+  }));
   host.querySelectorAll(".logrow").forEach(row => {
-    const det = row.querySelector(".ldetail");
+    const k = row.dataset.k, det = row.querySelector(".ldetail");
     row.querySelector(".lhead").addEventListener("click", () => {
-      det.hidden = !det.hidden;
-      row.classList.toggle("open", !det.hidden);
+      const nowOpen = det.hidden;
+      det.hidden = !nowOpen;
+      row.classList.toggle("open", nowOpen);
+      // Expanded rows survive the next poll because they are remembered by a
+      // stable key rather than being implicit DOM state.
+      if (nowOpen) _logState.open.add(k); else _logState.open.delete(k);
     });
-  });
-  host.querySelectorAll(".copybtn").forEach(b =>
-    b.addEventListener("click", async e => {
+    const cb = row.querySelector(".copybtn");
+    if (cb) cb.addEventListener("click", async e => {
       e.stopPropagation();
-      const txt = logs[+b.dataset.i].raw || "";
+      const txt = row.querySelector("pre.code").textContent;
       try { await navigator.clipboard.writeText(txt); }
       catch (_) {
         const ta = document.createElement("textarea");
         ta.value = txt; document.body.appendChild(ta); ta.select();
         try { document.execCommand("copy"); } finally { ta.remove(); }
       }
-      const was = b.textContent; b.textContent = "Copied";
-      setTimeout(() => { b.textContent = was; }, 1200);
-    }));
+      cb.textContent = "Copied";
+      setTimeout(() => { cb.textContent = "Copy JSON"; }, 1200);
+    });
+  });
+}
+
+/* Rejects by reason -- the frequency data behind the alerts. Alerts are a
+   current-state list; this is what is actually recurring. */
+function chartRejects(host, dlq) {
+  if (!dlq.length) { host.innerHTML = '<p class="empty">no rejected records</p>'; return; }
+  const max = Math.max(...dlq.map(d => d.count), 1);
+  host.innerHTML = dlq.slice(0, 8).map(d =>
+    '<div class="rejrow">' +
+      '<span class="rlbl">' + esc(d.reason) + '</span>' +
+      '<span class="rbar"><span style="width:' + (d.count / max * 100).toFixed(1) +
+        '%"></span></span>' +
+      '<span class="rval">' + fmt(d.count) + '</span>' +
+    '</div>').join("");
+}
+
+let _alertPage = 0;
+function renderAlerts(host, alerts) {
+  if (!alerts.length) {
+    host.innerHTML = '<div class="ok-state">No alerts \— every rule below threshold.</div>';
+    return;
+  }
+  const PER = 5;
+  const pages = Math.max(1, Math.ceil(alerts.length / PER));
+  if (_alertPage >= pages) _alertPage = pages - 1;
+  const slice = alerts.slice(_alertPage * PER, _alertPage * PER + PER);
+  const crit = alerts.filter(a => a.level === "critical").length;
+  host.innerHTML =
+    '<div class="logbar"><span class="acount">' + crit + ' critical \· ' +
+      (alerts.length - crit) + ' warning</span><span class="grow"></span>' +
+      (pages > 1
+        ? '<span class="pageinfo">' + (_alertPage + 1) + '/' + pages + '</span>' +
+          '<button class="pg" data-d="-1"' + (_alertPage === 0 ? " disabled" : "") + '>\‹</button>' +
+          '<button class="pg" data-d="1"' + (_alertPage >= pages - 1 ? " disabled" : "") + '>\›</button>'
+        : "") +
+    '</div>' +
+    slice.map(a =>
+      '<div class="alert ' + a.level + '">' +
+        '<span class="lv">' + (a.level === "critical" ? "CRIT" : "WARN") + '</span>' +
+        '<span class="ttl">' + esc(a.title) + '</span>' +
+        '<span class="val">' + esc(String(a.value)) + esc(a.unit) + '</span>' +
+        '<span class="thr">threshold ' + esc(String(a.threshold)) + esc(a.unit) + '</span>' +
+      '</div>').join("");
+  host.querySelectorAll(".pg").forEach(b => b.addEventListener("click", () => {
+    if (b.disabled) return;
+    _alertPage += (+b.dataset.d);
+    renderAlerts(host, alerts);
+  }));
 }
 
 let _imTimer = null;
@@ -1518,6 +1664,10 @@ async function viewIngest(main) {
       "Thresholds are declared in ALERT_RULES rather than buried in a query, so they can " +
       "be argued with.",
       '<div id="alerts">' + skeleton(2) + '</div>', "col-5") +
+    card("Rejects by reason",
+      "Alerts are current state; this is what actually recurs. Every rejected record is " +
+      "retained with its parse reason rather than dropped.",
+      '<div id="rejects">' + skeleton(4) + '</div>', "col-5") +
     card("Logs",
       "Real events: pipeline runs from sony.pipeline_runs and rejects from sony.stream_dlq.",
       '<div id="logs">' + skeleton(5) + '</div>', "col-7") +
@@ -1540,6 +1690,7 @@ async function viewIngest(main) {
     chartBatches($("#batches"), d.batches);
     renderAlerts($("#alerts"), d.alerts);
     renderLogs($("#logs"), d.logs);
+    chartRejects($("#rejects"), d.dlq);
     perf(d);
   }
   await tick();
@@ -1981,6 +2132,38 @@ async function viewArchitecture(main) {
   await renderPlayground($("#pg"));
 }
 
+
+/* Playground results are paged too: a read-only query can legitimately return
+   500 rows and a 500-row wall is not a result, it is a scroll. */
+let _resPage = 0;
+function renderResultGrid(host, r) {
+  const PER = 20;
+  if (!r.columns.length) { host.innerHTML = '<p class="empty">no rows</p>'; return; }
+  const pages = Math.max(1, Math.ceil(r.rows.length / PER));
+  if (_resPage >= pages) _resPage = pages - 1;
+  const start = _resPage * PER;
+  host.innerHTML =
+    (r.rows.length > PER
+      ? '<div class="logbar"><span class="pageinfo">' + (start + 1) + '–' +
+        Math.min(start + PER, r.rows.length) + ' of ' + fmt(r.rows.length) +
+        (r.truncated ? ' (server capped at 500)' : "") + '</span><span class="grow"></span>' +
+        '<button class="pg" data-d="-1"' + (_resPage === 0 ? " disabled" : "") + '>‹</button>' +
+        '<button class="pg" data-d="1"' + (_resPage >= pages - 1 ? " disabled" : "") + '>›</button>' +
+        '</div>'
+      : "") +
+    '<div class="tablewrap"><table><thead><tr>' +
+      r.columns.map(c => '<th style="cursor:default">' + esc(c) + '</th>').join("") +
+    '</tr></thead><tbody>' +
+      r.rows.slice(start, start + PER).map(row =>
+        '<tr>' + row.map(v => '<td>' + esc(v) + '</td>').join("") + '</tr>').join("") +
+    '</tbody></table></div>';
+  host.querySelectorAll(".pg").forEach(b => b.addEventListener("click", () => {
+    if (b.disabled) return;
+    _resPage += (+b.dataset.d);
+    renderResultGrid(host, r);
+  }));
+}
+
 async function renderPlayground(host) {
   const cat = await (await fetch("/api/catalog")).json();
   host.innerHTML = `
@@ -2024,6 +2207,7 @@ async function renderPlayground(host) {
     $("#pg-out").innerHTML = `<p class="note-inline">running…</p>`;
     $("#pg-metrics").innerHTML = "";
     try {
+      _resPage = 0;
       const r = await (await fetch("/api/playground?" + new URLSearchParams(
         {sql, runs: $("#pg-runs").value}))).json();
       if (r.error) throw new Error(r.error);
@@ -2045,12 +2229,7 @@ async function renderPlayground(host) {
         <code>system.query_log</code>, which is per-replica on ClickHouse Cloud, so a lookup
         lands on a node that may not have run the query. Stated rather than estimated.</p>`;
       if (!r.columns.length) { $("#pg-out").innerHTML = `<p class="note-inline">no rows</p>`; return; }
-      $("#pg-out").innerHTML = `<div class="tablewrap"><table><thead><tr>` +
-        r.columns.map(c=>`<th style="cursor:default">${esc(c)}</th>`).join("") +
-        `</tr></thead><tbody>` + r.rows.map(row=>`<tr style="cursor:default">` +
-          row.map(v=>`<td>${esc(v)}</td>`).join("") + `</tr>`).join("") +
-        `</tbody></table></div>` + (r.truncated
-          ? `<p class="note-inline">truncated to 500 rows</p>` : "");
+      renderResultGrid($("#pg-out"), r);
     } catch (e) {
       $("#pg-out").innerHTML = `<p class="err">${esc(e.message)}</p>`;
     }
