@@ -11,3 +11,7 @@ data/*.parquet
 # Generated run artefacts are kept, but scratch is not.
 out/scratch/
 *.log
+
+# Generated test fixtures. Large, and reproducible from the source dataset:
+#   python scripts/make_fixture.py --raw <raw.csv> --out fixtures/open_day.csv --cut-minutes-before-end 30
+fixtures/*.csv
