@@ -217,11 +217,20 @@ def build_intervals(path: str, params: Params | None = None):
     params = params or Params()
     sess = collections.defaultdict(list)
     meta = {}
+    meta_ts = {}
     with open(path, newline="", encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
             sid = r["video_session_id"]
-            sess[sid].append((int(r["event_timestamp"]), r["event_type"], r["event"]))
-            if sid not in meta:
+            ts = int(r["event_timestamp"])
+            sess[sid].append((ts, r["event_type"], r["event"]))
+            # Attribute dimensions from the session's EARLIEST event by
+            # timestamp -- argMin, matching sql/02_intervals.sql exactly.
+            # 95 sessions change platform and 120 change user_id mid-session,
+            # so "first row encountered in the file" is not the same thing and
+            # is not reproducible: it depends on row order, which no ingestion
+            # path guarantees.
+            if sid not in meta_ts or ts < meta_ts[sid]:
+                meta_ts[sid] = ts
                 meta[sid] = {
                     "video_session_id": sid,
                     "user_id": r["user_id"],

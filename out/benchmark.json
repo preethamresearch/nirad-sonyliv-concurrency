@@ -1,0 +1,167 @@
+{
+  "range": [
+    "2026-07-14 15:43:00",
+    "2026-07-26 11:30:00"
+  ],
+  "results": [
+    {
+      "query": "full range, no filter",
+      "t0": "2026-07-14 15:43:00",
+      "t1": "2026-07-26 11:30:00",
+      "filters": {},
+      "peak": 3090,
+      "peak_minute": "2026-07-26 10:59:00",
+      "avg": 8.5635,
+      "scan_ms": 18.77,
+      "checkpoint_ms": 41.05,
+      "scan_rows_read": 31522,
+      "checkpoint_rows_read": 31522,
+      "verdict": "ok"
+    },
+    {
+      "query": "full range, ANDROID_PHONE",
+      "t0": "2026-07-14 15:43:00",
+      "t1": "2026-07-26 11:30:00",
+      "filters": {
+        "platform": "ANDROID_PHONE"
+      },
+      "peak": 1895,
+      "peak_minute": "2026-07-26 10:56:00",
+      "avg": 5.5243,
+      "scan_ms": 19.01,
+      "checkpoint_ms": 49.74,
+      "scan_rows_read": 18243,
+      "checkpoint_rows_read": 18243,
+      "verdict": "ok"
+    },
+    {
+      "query": "full range, IPHONE",
+      "t0": "2026-07-14 15:43:00",
+      "t1": "2026-07-26 11:30:00",
+      "filters": {
+        "platform": "IPHONE"
+      },
+      "peak": 383,
+      "peak_minute": "2026-07-26 11:02:00",
+      "avg": 1.0102,
+      "scan_ms": 16.82,
+      "checkpoint_ms": 38.0,
+      "scan_rows_read": 10063,
+      "checkpoint_rows_read": 10063,
+      "verdict": "ok"
+    },
+    {
+      "query": "full range, SONY_ANDROID_TV",
+      "t0": "2026-07-14 15:43:00",
+      "t1": "2026-07-26 11:30:00",
+      "filters": {
+        "platform": "SONY_ANDROID_TV"
+      },
+      "peak": 368,
+      "peak_minute": "2026-07-26 10:59:00",
+      "avg": 0.8235,
+      "scan_ms": 15.55,
+      "checkpoint_ms": 37.82,
+      "scan_rows_read": 5075,
+      "checkpoint_rows_read": 5075,
+      "verdict": "ok"
+    },
+    {
+      "query": "full range, video_type=live",
+      "t0": "2026-07-14 15:43:00",
+      "t1": "2026-07-26 11:30:00",
+      "filters": {
+        "video_type": "live"
+      },
+      "peak": 469,
+      "peak_minute": "2026-07-26 10:42:00",
+      "avg": 1.1487,
+      "scan_ms": 16.78,
+      "checkpoint_ms": 42.7,
+      "scan_rows_read": 29651,
+      "checkpoint_rows_read": 31510,
+      "verdict": "ok"
+    },
+    {
+      "query": "full range, country=india",
+      "t0": "2026-07-14 15:43:00",
+      "t1": "2026-07-26 11:30:00",
+      "filters": {
+        "country": "india"
+      },
+      "peak": 3090,
+      "peak_minute": "2026-07-26 10:59:00",
+      "avg": 8.5635,
+      "scan_ms": 17.74,
+      "checkpoint_ms": 45.0,
+      "scan_rows_read": 31522,
+      "checkpoint_rows_read": 31522,
+      "verdict": "ok"
+    },
+    {
+      "query": "platform+country combo",
+      "t0": "2026-07-14 15:43:00",
+      "t1": "2026-07-26 11:30:00",
+      "filters": {
+        "platform": "ANDROID_PHONE",
+        "country": "india"
+      },
+      "peak": 1895,
+      "peak_minute": "2026-07-26 10:56:00",
+      "avg": 5.5243,
+      "scan_ms": 21.15,
+      "checkpoint_ms": 44.77,
+      "scan_rows_read": 18243,
+      "checkpoint_rows_read": 18243,
+      "verdict": "ok"
+    },
+    {
+      "query": "peak day, minute grain",
+      "t0": "2026-07-26 00:00:00",
+      "t1": "2026-07-26 23:59:00",
+      "filters": {},
+      "peak": 3090,
+      "peak_minute": "2026-07-26 10:59:00",
+      "avg": 95.8514,
+      "scan_ms": 27.38,
+      "checkpoint_ms": 35.12,
+      "scan_rows_read": 31522,
+      "checkpoint_rows_read": 30702,
+      "verdict": "ok"
+    },
+    {
+      "query": "peak day, ANDROID_PHONE",
+      "t0": "2026-07-26 00:00:00",
+      "t1": "2026-07-26 23:59:00",
+      "filters": {
+        "platform": "ANDROID_PHONE"
+      },
+      "peak": 1895,
+      "peak_minute": "2026-07-26 10:56:00",
+      "avg": 60.2715,
+      "scan_ms": 26.54,
+      "checkpoint_ms": 29.53,
+      "scan_rows_read": 18243,
+      "checkpoint_rows_read": 17435,
+      "verdict": "ok"
+    },
+    {
+      "query": "peak hour, minute grain",
+      "t0": "2026-07-26 10:00:00",
+      "t1": "2026-07-26 11:00:00",
+      "filters": {},
+      "peak": 3090,
+      "peak_minute": "2026-07-26 10:59:00",
+      "avg": 1182.9836,
+      "scan_ms": 19.47,
+      "checkpoint_ms": 23.64,
+      "scan_rows_read": 26447,
+      "checkpoint_rows_read": 24576,
+      "verdict": "ok"
+    }
+  ],
+  "rows_read_scan": 220531,
+  "rows_read_checkpoint": 218891,
+  "checkpoint_read_amplification": 1.007,
+  "failures": 0
+}

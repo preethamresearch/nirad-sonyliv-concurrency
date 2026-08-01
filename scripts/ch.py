@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 
 _ENV_LOADED = False
+LAST_SUMMARY = {}
 
 
 def _load_env(path=None):
@@ -82,7 +83,17 @@ def execute(query, body=None, settings=None, timeout=1800, retries=3):
             t0 = time.time()
             req = urllib.request.Request(_url(cfg, params), data=data, headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-                return resp.read().decode("utf-8", "replace"), time.time() - t0
+                body = resp.read().decode("utf-8", "replace")
+                # X-ClickHouse-Summary carries read_rows / read_bytes. Wall
+                # time on a laptop-sized dataset says almost nothing about a
+                # design's behaviour at 100x; rows read says everything.
+                global LAST_SUMMARY
+                try:
+                    import json as _json
+                    LAST_SUMMARY = _json.loads(resp.headers.get("X-ClickHouse-Summary") or "{}")
+                except Exception:
+                    LAST_SUMMARY = {}
+                return body, time.time() - t0
         except urllib.error.HTTPError as e:
             msg = e.read().decode("utf-8", "replace")
             raise RuntimeError(f"ClickHouse HTTP {e.code}: {msg[:2000]}") from None
