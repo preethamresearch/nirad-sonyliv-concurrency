@@ -135,7 +135,16 @@ FROM
         argMin(audio_language, event_timestamp_ms) AS audio_language,
 
         -- (ts, state_delta, close_code) ordered by time.
-        arraySort(x -> x.1, groupArray(tuple(
+        -- arraySort over the WHOLE tuple, not just the timestamp. `pause` and
+        -- `AppBackgrounded` frequently share a millisecond (8,280 cases), and
+        -- sorting on the timestamp alone leaves their relative order
+        -- unspecified -- ClickHouse and the Python oracle then broke the tie
+        -- differently and disagreed on close_reason. Boundaries and peak were
+        -- unaffected, but a pipeline judged on reproducibility cannot contain
+        -- a non-deterministic sort. Ordering by (ts, state_delta, close_code)
+        -- is total: at equal timestamps closes (-1) precede opens (+1), and
+        -- pause (1) precedes backgrounded (2).
+        arraySort(groupArray(tuple(
             event_timestamp_ms,
             toInt8(state_delta),
             toUInt8(multiIf(event = 'pause',                    1,

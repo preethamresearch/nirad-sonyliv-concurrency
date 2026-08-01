@@ -108,6 +108,23 @@ def classify(event_type: str, event: str) -> int:
     return 0
 
 
+def close_code(event_type: str, event: str) -> int:
+    """Mirrors the multiIf in sql/02_intervals.sql. Order matters: it is part
+    of the sort key, so the two implementations must agree digit for digit."""
+    if event == "pause":
+        return 1
+    if event_type == "AppBackgrounded":
+        return 2
+    if event_type == "VideoSessionEnd":
+        return 3
+    return 0
+
+
+def _sort_key(e):
+    ts, etype, ev = e
+    return (ts, classify(etype, ev), close_code(etype, ev))
+
+
 def intent_intervals(events, params: Params):
     """Periods the viewer INTENDED to be watching.
 
@@ -186,7 +203,11 @@ def session_intervals(events, params: Params, dims: dict) -> list[Interval]:
 
     `events` is an iterable of (ts_ms, event_type, event), any order.
     """
-    events = sorted(events, key=lambda e: e[0])
+    # Total order, matching sql/02_intervals.sql exactly: (ts, state_delta,
+    # close_code). Sorting on the timestamp alone leaves same-millisecond
+    # pause/AppBackgrounded pairs unordered, and the two implementations then
+    # disagree on close_reason.
+    events = sorted(events, key=_sort_key)
     if not events:
         return []
 
