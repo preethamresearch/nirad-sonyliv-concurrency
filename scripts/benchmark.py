@@ -50,7 +50,7 @@ FROM (
     SELECT minute, sum(d) OVER (ORDER BY minute) AS c
     FROM (
         SELECT minute, sum(delta) AS d
-        FROM sony.concurrency_minute_delta
+        FROM sony.concurrency_delta_all
         WHERE minute <= t1 {where_sql(f)}
         GROUP BY minute
         ORDER BY minute WITH FILL
@@ -76,7 +76,15 @@ WITH toDateTime('{t0}', 'UTC') AS t0,
 SELECT
     toString(ifNull(anchor, toDateTime(0, 'UTC'))) AS anchor_ts,
     ifNull((SELECT sum(concurrency) FROM sony.concurrency_hourly_checkpoint
-             WHERE hour_boundary = anchor {w}), 0) AS base"""
+             WHERE hour_boundary = anchor {w}), 0)
+    -- Checkpoints are built from sealed intervals only. Any session still
+    -- open across this boundary is live in the hot tier and must be added,
+    -- or the anchor understates the level and every minute after it is low.
+  + ifNull((SELECT count() FROM sony.session_active_intervals FINAL
+             WHERE is_open = 1
+               AND toDateTime(intDiv(active_start_ms, 60000) * 60, 'UTC') <= anchor
+               AND toDateTime(intDiv(active_end_ms,   60000) * 60, 'UTC') >= anchor {w}), 0)
+    AS base"""
 
 
 def sql_checkpoint(t0, t1, f, anchor, base):
@@ -92,7 +100,7 @@ FROM (
     SELECT minute, {base} + sum(d) OVER (ORDER BY minute) AS c
     FROM (
         SELECT minute, sum(delta) AS d
-        FROM sony.concurrency_minute_delta
+        FROM sony.concurrency_delta_all
         WHERE minute > toDateTime('{anchor}', 'UTC')
           AND minute <= toDateTime('{t1}', 'UTC') {where_sql(f)}
         GROUP BY minute
@@ -125,7 +133,7 @@ def run_checkpoint(t0, t1, f, repeats=3):
             # a history scan, but it only happens for ranges that begin before
             # the first checkpoint, i.e. at the very start of retention.
             text_fb, el_fb = ch.query(
-                "SELECT ifNull(sum(delta), 0) FROM sony.concurrency_minute_delta "
+                "SELECT ifNull(sum(delta), 0) FROM sony.concurrency_delta_all "
                 f"WHERE minute < toDateTime('{t0}', 'UTC') {where_sql(f)}")
             base = text_fb.strip() or "0"
             anchor = ch.scalar(

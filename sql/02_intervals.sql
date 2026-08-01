@@ -154,8 +154,16 @@ FROM
         -- is what absorbs the 65% of sessions with unbalanced pause/resume.
         arrayFilter(x -> x.2 != 0, evs) AS tr,
         arrayMap(x -> x.2, tr) AS tr_d,
+        -- arrayResize guards the empty case. A session with heartbeats but no
+        -- state transitions at all -- which happens the moment a day is cut
+        -- mid-stream, and therefore on any day containing open sessions --
+        -- gives tr_d = []. Then arrayPushFront(arrayPopBack([]), 0) = [0],
+        -- length 1 against length 0, and arrayFilter rejects the whole query
+        -- with SIZES_OF_ARRAYS_DONT_MATCH. The provided dataset never hits
+        -- this because every one of its sessions ends with a VideoSessionEnd.
         arrayFilter((x, d, pd) -> d != pd, tr, tr_d,
-                    arrayPushFront(arrayPopBack(tr_d), toInt8(0))) AS kept0,
+                    arrayResize(arrayPushFront(arrayPopBack(tr_d), toInt8(0)),
+                                length(tr_d))) AS kept0,
         -- A leading close (stop before any play) opens nothing; drop it so
         -- the sequence strictly alternates open, close, open, close...
         if(length(kept0) > 0 AND kept0[1].2 = -1, arrayPopFront(kept0), kept0) AS kept,

@@ -137,7 +137,58 @@ GROUP BY platform, country, video_type, content_id, minute;
 
 
 -- ---------------------------------------------------------------------
+-- THE HOT TIER.
+--
+-- Sealed deltas above cover closed intervals only. Open intervals -- sessions
+-- still running at the watermark, whose active range grows every time another
+-- heartbeat lands -- are deliberately NOT materialised. Writing them into an
+-- append-only SummingMergeTree would mean either re-inserting a correction row
+-- per heartbeat or rebuilding the table, and both are the "recompute on every
+-- update" behaviour the problem statement singles out as the wrong answer.
+--
+-- Instead they are computed at read time from the interval table. The set is
+-- bounded by concurrency, not by retention: however long the service runs,
+-- only sessions open RIGHT NOW appear here. On the open-session fixture that
+-- is a few thousand rows against a sealed tier that grows forever.
+--
+-- A late heartbeat therefore costs exactly one ReplacingMergeTree row in
+-- session_active_intervals. Nothing is rebuilt, and the served number moves
+-- on the next query.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE VIEW sony.open_minute_delta AS
+SELECT platform, country, video_type, content_id, minute, toInt32(sum(d)) AS delta
+FROM
+(
+    SELECT platform, country, video_type, content_id,
+           toDateTime(intDiv(active_start_ms, 60000) * 60, 'UTC') AS minute, 1 AS d
+    FROM sony.session_active_intervals FINAL
+    WHERE is_open = 1
+    UNION ALL
+    SELECT platform, country, video_type, content_id,
+           toDateTime((intDiv(active_end_ms, 60000) + 1) * 60, 'UTC') AS minute, -1 AS d
+    FROM sony.session_active_intervals FINAL
+    WHERE is_open = 1
+)
+GROUP BY platform, country, video_type, content_id, minute;
+
+
+-- The single surface every dashboard query reads: sealed history plus the
+-- live tail, unioned. Callers never need to know which tier a row came from.
+CREATE OR REPLACE VIEW sony.concurrency_delta_all AS
+SELECT platform, country, video_type, content_id, minute, delta
+FROM sony.concurrency_minute_delta
+UNION ALL
+SELECT platform, country, video_type, content_id, minute, delta
+FROM sony.open_minute_delta;
+
+
+-- ---------------------------------------------------------------------
 -- Populate hourly checkpoints from sealed intervals.
+--
+-- Checkpoints cover the SEALED tier only, so a query that anchors on one must
+-- add back the open intervals spanning that boundary. That correction is in
+-- the query layer (scripts/benchmark.py :: sql_anchor), not here, because it
+-- has to be recomputed per query against the current open set.
 -- ---------------------------------------------------------------------
 -- Each interval emits only the hour boundaries it actually spans -- first
 -- boundary at or after its start, last at or before its end. Cost is

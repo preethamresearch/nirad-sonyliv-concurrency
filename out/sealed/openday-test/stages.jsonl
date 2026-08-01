@@ -1,0 +1,30 @@
+{"stage": "connect", "at_s": 0.004, "host": "127.0.0.1", "secure": false, "server": "26.8.1.571"}
+{"stage": "input", "at_s": 0.543, "raw": "open_day.csv", "raw_bytes": 140720358, "raw_sha256": "916484cefba5b244", "git": "86f028bd4814", "dirty": true}
+{"stage": "schema", "at_s": 0.594, "seconds": 0.05}
+{"stage": "truncate", "at_s": 0.757, "tables": 4}
+{"stage": "load_content", "at_s": 1.213, "rows": 33464, "seconds": 0.45}
+{"stage": "load_raw", "at_s": 3.715, "rows": 532907, "seconds": 2.5}
+{"stage": "data_profile", "at_s": 3.974, "sessions": 7444, "users": 6680, "range": "2026-07-14 15:43:58.144 .. 2026-07-26 11:00:04.837", "open_sessions": 3526, "dict_misses": 0, "unknown_event_types": "none"}
+{"stage": "connect", "at_s": 0.021, "host": "127.0.0.1", "secure": false, "server": "26.8.1.571"}
+{"stage": "input", "at_s": 0.535, "raw": "open_day.csv", "raw_bytes": 140720358, "raw_sha256": "916484cefba5b244", "git": "86f028bd4814", "dirty": true}
+{"stage": "schema", "at_s": 0.559, "seconds": 0.02}
+{"stage": "truncate", "at_s": 0.592, "tables": 4}
+{"stage": "load_content", "at_s": 0.755, "rows": 33464, "seconds": 0.16}
+{"stage": "load_raw", "at_s": 3.27, "rows": 532907, "seconds": 2.52}
+{"stage": "data_profile", "at_s": 3.467, "sessions": 7444, "users": 6680, "range": "2026-07-14 15:43:58.144 .. 2026-07-26 11:00:04.837", "open_sessions": 3526, "dict_misses": 0, "unknown_event_types": "none"}
+{"stage": "derive_intervals", "at_s": 4.068, "rows": 20298, "open_intervals": 1, "active_hours": 1086.58, "watermark_ms": 1785063604837, "seconds": 0.58}
+{"stage": "build_serving", "at_s": 4.396, "delta_rows": 19464, "checkpoint_rows": 624, "minute_grid_rows_avoided": 85082, "seconds": 0.33}
+{"stage": "benchmark", "at_s": 10.618, "queries": 10, "disagreements": 7, "seconds": 6.22}
+{"stage": "oracle_parity", "at_s": 14.614, "oracle_intervals": 20298, "clickhouse_intervals": 20298, "only_oracle": 0, "only_clickhouse": 0, "match": true, "seconds": 4.0}
+{"stage": "connect", "at_s": 0.005, "host": "127.0.0.1", "secure": false, "server": "26.8.1.571"}
+{"stage": "input", "at_s": 0.52, "raw": "open_day.csv", "raw_bytes": 140720358, "raw_sha256": "916484cefba5b244", "git": "86f028bd4814", "dirty": true}
+{"stage": "schema", "at_s": 0.544, "seconds": 0.02}
+{"stage": "truncate", "at_s": 0.609, "tables": 4}
+{"stage": "load_content", "at_s": 0.786, "rows": 33464, "seconds": 0.18}
+{"stage": "load_raw", "at_s": 3.319, "rows": 532907, "seconds": 2.53}
+{"stage": "data_profile", "at_s": 3.704, "sessions": 7444, "users": 6680, "range": "2026-07-14 15:43:58.144 .. 2026-07-26 11:00:04.837", "open_sessions": 3526, "dict_misses": 0, "unknown_event_types": "none"}
+{"stage": "derive_intervals", "at_s": 4.284, "rows": 20298, "open_intervals": 1, "active_hours": 1086.58, "watermark_ms": 1785063604837, "seconds": 0.53}
+{"stage": "build_serving", "at_s": 4.513, "delta_rows": 19464, "checkpoint_rows": 624, "minute_grid_rows_avoided": 85082, "seconds": 0.23}
+{"stage": "benchmark", "at_s": 13.806, "queries": 10, "disagreements": 0, "seconds": 9.29}
+{"stage": "oracle_parity", "at_s": 17.799, "oracle_intervals": 20298, "clickhouse_intervals": 20298, "only_oracle": 0, "only_clickhouse": 0, "match": true, "seconds": 3.99}
+{"stage": "query_log", "at_s": 17.857, "entries": 186}
