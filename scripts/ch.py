@@ -78,6 +78,19 @@ def execute(query, body=None, settings=None, timeout=1800, retries=3):
 
     ctx = ssl.create_default_context() if cfg["secure"] else None
     last_err = None
+
+    # Trace every statement into ClickStack. Imported lazily and guarded so
+    # that a missing or misconfigured collector can never fail a query -- the
+    # observability layer must not be able to break the thing it observes.
+    try:
+        import otel as _otel
+        _span = _otel.span("clickhouse.query",
+                           **{"db.system": "clickhouse",
+                              "db.statement": " ".join(query.split())[:400],
+                              "db.name": cfg["db"], "server.address": cfg["host"]})
+    except Exception:
+        _span = None
+
     for attempt in range(retries):
         try:
             t0 = time.time()
@@ -93,7 +106,17 @@ def execute(query, body=None, settings=None, timeout=1800, retries=3):
                     LAST_SUMMARY = _json.loads(resp.headers.get("X-ClickHouse-Summary") or "{}")
                 except Exception:
                     LAST_SUMMARY = {}
-                return body, time.time() - t0
+                elapsed = time.time() - t0
+                if _span is not None:
+                    # rows_read is the number that actually tells us whether the
+                    # sort key and projection are earning their keep; wall time
+                    # on a laptop-sized dataset mostly measures the laptop.
+                    with _span:
+                        _span.set(duration_ms=round(elapsed * 1000, 2),
+                                  read_rows=int(LAST_SUMMARY.get("read_rows", 0) or 0),
+                                  read_bytes=int(LAST_SUMMARY.get("read_bytes", 0) or 0),
+                                  result_rows=int(LAST_SUMMARY.get("result_rows", 0) or 0))
+                return body, elapsed
         except urllib.error.HTTPError as e:
             msg = e.read().decode("utf-8", "replace")
             raise RuntimeError(f"ClickHouse HTTP {e.code}: {msg[:2000]}") from None

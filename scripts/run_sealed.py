@@ -24,6 +24,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ch          # noqa: E402
+import otel        # noqa: E402
 import oracle      # noqa: E402
 import benchmark   # noqa: E402
 
@@ -68,6 +69,10 @@ class Trace:
         self._t0 = time.time()
 
     def stage(self, name, **fields):
+        # Mirror every stage into ClickStack as a span. The JSONL trace is for
+        # the judges' offline reading; the spans are what make ingest lag and
+        # per-stage cost queryable in ClickHouse alongside everything else.
+        otel.event(f"pipeline.{name}", **{k: v for k, v in fields.items()})
         rec = {"stage": name, "at_s": round(time.time() - self._t0, 3), **fields}
         self.stages.append(rec)
         with open(self.path, "a", encoding="utf-8") as fh:
@@ -135,7 +140,15 @@ def main():
                    body=fh, settings={"input_format_csv_skip_first_lines": "1",
                                       "max_insert_block_size": "1048576"})
     n_raw = int(ch.scalar("SELECT count() FROM sony.raw_events"))
-    tr.stage("load_raw", rows=n_raw, seconds=round(time.time() - t, 2))
+    load_s = round(time.time() - t, 2)
+    # Ingest lag = wall clock now minus the newest event we hold. For a live
+    # concurrency service this is the metric that decides whether the answer
+    # is trustworthy: concurrency computed off stale ingest is wrong in a way
+    # no amount of query tuning can repair.
+    lag_s = float(ch.scalar("SELECT round(dateDiff('second', max(event_time), now64(3, 'UTC')), 1) "
+                            "FROM sony.raw_events"))
+    tr.stage("load_raw", rows=n_raw, seconds=load_s,
+             rows_per_sec=int(n_raw / max(load_s, 0.01)), ingest_lag_seconds=lag_s)
 
     # Data-quality gates. These are the shapes that broke us on the provided
     # dataset; if the sealed day differs we want it in the trace, loudly,
@@ -228,6 +241,12 @@ def main():
     except RuntimeError as e:
         tr.stage("query_log", entries=0, unavailable=str(e)[:120])
 
+    st = otel.status()
+    n_spans = otel.flush()
+    tr.stage("clickstack_export", enabled=st["enabled"], spans_flushed=n_spans,
+             dropped=st["dropped"], trace_id=st["trace_id"])
+    manifest_extra_trace = st["trace_id"]
+
     manifest = {
         "run_id": run_id,
         "generated_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -242,6 +261,7 @@ def main():
         "stages": tr.stages,
         "oracle_parity": parity,
         "answers_file": "answers.json",
+        "clickstack_trace_id": manifest_extra_trace,
     }
     with open(os.path.join(outdir, "manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
