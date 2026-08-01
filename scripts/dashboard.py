@@ -1245,6 +1245,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             # Vendored assets. Everything the page needs is served from this
             # repo -- no CDN, so venue wi-fi cannot break the demo.
+            # Screenshots embedded in the deck. Served from the repo so the
+            # deck renders with no network at all.
+            if u.path.startswith("/shots/") and u.path.endswith((".jpg", ".png")):
+                name = os.path.basename(u.path)
+                fp = os.path.join(WEB, "shots", name)
+                if os.path.exists(fp):
+                    with open(fp, "rb") as fh:
+                        ctype = "image/png" if name.endswith(".png") else "image/jpeg"
+                        return self._send(200, fh.read(), ctype)
+                return self._send(404, {"error": "not found"})
+
             if u.path.startswith("/vendor/") and u.path.endswith(".js"):
                 name = os.path.basename(u.path)
                 fp = os.path.join(WEB, "vendor", name)
