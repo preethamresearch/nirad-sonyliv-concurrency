@@ -1,0 +1,13 @@
+.env
+*.pyc
+__pycache__/
+.venv/
+venv/
+
+# Raw datasets are distributed via the organisers' Git LFS repo, not vendored here.
+data/*.csv
+data/*.parquet
+
+# Generated run artefacts are kept, but scratch is not.
+out/scratch/
+*.log
