@@ -8,6 +8,7 @@ import gzip
 import io
 import os
 import ssl
+import threading
 import sys
 import time
 import urllib.parse
@@ -17,22 +18,37 @@ _ENV_LOADED = False
 LAST_SUMMARY = {}
 
 
+_ENV_LOCK = threading.Lock()
+
+
 def _load_env(path=None):
-    """Read .env from the repo root if present. No dependency on python-dotenv."""
+    """Read .env from the repo root if present. No dependency on python-dotenv.
+
+    Guarded by a lock, and the loaded flag is set only AFTER os.environ is
+    populated. The obvious version -- set the flag first, then read the file --
+    is a double-checked-locking race: a second thread sees the flag, returns
+    immediately, and reads an environment the first thread has not finished
+    filling. It yields an empty password and a 401 that looks exactly like a
+    rotated credential. Harmless while every caller was sequential; the moment
+    queries began running concurrently it became an intermittent auth failure.
+    """
     global _ENV_LOADED
     if _ENV_LOADED:
         return
-    _ENV_LOADED = True
-    path = path or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-    if not os.path.exists(path):
-        return
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip())
+    with _ENV_LOCK:
+        if _ENV_LOADED:          # another thread finished while we waited
+            return
+        path = path or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+        _ENV_LOADED = True       # only now is the environment usable
 
 
 def config():
