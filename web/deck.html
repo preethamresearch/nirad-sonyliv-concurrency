@@ -16,9 +16,15 @@
 }
 *{box-sizing:border-box}
 body{margin:0;background:#e8e8e4;color:var(--ink);
-  font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+  font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
+  overflow-x:hidden}
+/* Slides are authored at exactly 1280x720 because that is what the PDF must
+   be. On screen they are scaled to fit the viewport instead of overflowing it:
+   zoom (unlike transform) shrinks the layout box too, so no horizontal
+   scrollbar appears. Print resets it to 1 so the PDF is unaffected. */
 .slide{
   position:relative; width:1280px; height:720px; margin:22px auto;
+  zoom:var(--z,1);
   background:var(--surface); border:1px solid var(--hair); border-radius:10px;
   padding:52px 60px 56px; overflow:hidden; box-shadow:0 3px 18px rgba(0,0,0,.09);
 }
@@ -67,6 +73,38 @@ li b,li strong{color:var(--ink)}
 .barlab{display:flex;justify-content:space-between;font-size:14px;color:var(--ink2);
   margin-bottom:3px}
 
+
+/* title slide: two columns so the right half is not dead space */
+.titlegrid{display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:start;
+  margin-top:6px}
+.titlegrid h1{font-size:46px;margin-bottom:14px}
+.titlegrid .sub{font-size:17px;margin-bottom:26px}
+.titlestats{display:flex;gap:30px}
+.titlestats div{display:flex;flex-direction:column}
+.titlestats b{font-size:30px;font-weight:720;letter-spacing:-.03em;color:#fff;
+  font-variant-numeric:tabular-nums;line-height:1.1}
+.titlestats span{font-size:11.5px;color:#8f8f88;letter-spacing:.05em;text-transform:uppercase;
+  margin-top:3px}
+.titleside{display:flex;flex-direction:column;gap:16px}
+.titleside .shot img{max-height:150px;object-fit:cover;object-position:top}
+.sidenote{border:1px solid #33352f;border-left:3px solid var(--brand);border-radius:8px;
+  padding:14px 16px;background:#1c1e1b}
+.sn-h{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:#8f8f88;
+  margin-bottom:7px}
+.sidenote p{margin:0;font-size:13.5px;line-height:1.55;color:#c9c9c1;max-width:none}
+.sn-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px}
+.sn-tags span{font-size:10.5px;color:#a9a9a1;border:1px solid #3a3c36;border-radius:999px;
+  padding:2px 9px}
+
+
+.stack{display:grid;gap:7px;margin-bottom:11px}
+.st{display:grid;grid-template-columns:9px auto 1fr;align-items:baseline;gap:8px;
+  font-size:12.5px}
+.st .d{width:7px;height:7px;border-radius:50%;background:#3fbf3f;align-self:center}
+.st b{color:#f0f0e8;font-weight:600;white-space:nowrap}
+.st em{color:#8f8f88;font-style:normal;font-size:11.5px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+
 /* screenshot slides */
 .shot{border:1px solid var(--hair);border-radius:8px;overflow:hidden;background:var(--plane);
   box-shadow:0 2px 10px rgba(0,0,0,.10)}
@@ -79,8 +117,8 @@ li b,li strong{color:var(--ink)}
 .shots2 .shot img{max-height:250px;object-fit:cover;object-position:top}
 
 @media print{
-  body{background:#fff}
-  .slide{margin:0;border:0;border-radius:0;box-shadow:none;
+  body{background:#fff;overflow:visible}
+  .slide{margin:0;border:0;border-radius:0;box-shadow:none;zoom:1;
     page-break-after:always;break-after:page;width:1280px;height:720px}
 }
 </style>
@@ -89,13 +127,42 @@ li b,li strong{color:var(--ink)}
 
 <!-- 1 ------------------------------------------------------------------ -->
 <section class="slide title-slide">
-  <div class="rule"></div>
-  <div class="kicker" style="color:#a9a9a1">Watchhouse · Click-a-thon 2026 · SonyLIV track</div>
-  <h1>An open app is not a viewer.</h1>
-  <p class="sub">Foreground-only concurrency at streaming scale, computed on ClickHouse.</p>
-  <div class="shots1" style="max-width:620px">
-    <div class="shot" style="border-color:#33352f"><img src="/shots/01-landing.jpg"
-      alt="Watchhouse landing page"></div>
+  <div class="titlegrid">
+    <div>
+      <div class="rule"></div>
+      <div class="kicker" style="color:#a9a9a1">Watchhouse · Click-a-thon 2026 · SonyLIV track</div>
+      <h1>An open app is not a viewer.</h1>
+      <p class="sub">Foreground-only concurrency at streaming scale, computed on ClickHouse.</p>
+      <div class="titlestats">
+        <div><b>3,743</b><span>reported peak</span></div>
+        <div><b style="color:#5b9bea">3,090</b><span>actually watching</span></div>
+        <div><b style="color:#faff69">653</b><span>phantom audience</span></div>
+      </div>
+    </div>
+    <aside class="titleside">
+      <div class="shot" style="border-color:#33352f"><img src="/shots/01-landing.jpg"
+        alt="Watchhouse landing page"></div>
+      <div class="sidenote">
+        <div class="sn-h">Running, not described</div>
+        <div class="stack">
+          <div class="st"><span class="d"></span><b>ClickHouse Cloud</b>
+            <em>26.2 · 905,558 rows</em></div>
+          <div class="st"><span class="d"></span><b>ClickStack / HyperDX</b>
+            <em>OTel spans on every query</em></div>
+          <div class="st"><span class="d"></span><b>LibreChat</b>
+            <em>Gemini 2.5 Flash</em></div>
+          <div class="st"><span class="d"></span><b>Langfuse</b>
+            <em>LLM trace + cost</em></div>
+          <div class="st"><span class="d"></span><b>Kafka · Redpanda</b>
+            <em>6 partitions, keyed by session</em></div>
+          <div class="st"><span class="d"></span><b>Redis</b>
+            <em>dedup set + open sessions</em></div>
+        </div>
+        <div class="sn-tags">
+          <span>oracle parity exact</span><span>2,028 events/s</span><span>77 s end to end</span>
+        </div>
+      </div>
+    </aside>
   </div>
   <div class="meta">Team Nirad · github.com/preethamresearch/nirad-sonyliv-concurrency</div>
   <div class="n" style="color:#6f6f68">1 / 15</div>
@@ -454,6 +521,16 @@ li b,li strong{color:var(--ink)}
 </section>
 
 <script>
+/* Fit the fixed-size slide to the viewport. Recomputed on resize so a
+   projector at a different resolution still shows whole slides. */
+function fitSlides() {
+  const pad = 48;
+  const z = Math.min(1, (document.documentElement.clientWidth - pad) / 1280);
+  document.documentElement.style.setProperty("--z", z.toFixed(4));
+}
+fitSlides();
+addEventListener("resize", fitSlides);
+
 // Arrow-key navigation for presenting from the browser.
 const slides = [...document.querySelectorAll('.slide')];
 let i = 0;

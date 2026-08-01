@@ -606,6 +606,50 @@ main, .main-col { min-width: 0; overflow-x: hidden; }
 .grid > * { min-width: 0; }
 svg { max-width: 100%; }
 
+
+/* --- responsive -----------------------------------------------------------
+   The shell assumed one screen. Three things change with width: the sidebar
+   narrows then collapses behind a toggle, the grid reflows at sensible
+   breakpoints rather than jumping straight to one column, and content stops
+   stretching on ultrawide displays where a 3000px-wide chart is unreadable. */
+main > .grid { max-width: 1680px; margin: 0 auto; }
+
+@media (max-width: 1400px) {
+  :root { --nav-w: 196px; }
+}
+@media (max-width: 1180px) {
+  .col-8 { grid-column: span 12; }
+  .col-7, .col-5 { grid-column: span 6; }
+  .col-3 { grid-column: span 6; }
+}
+@media (max-width: 900px) {
+  :root { --nav-w: 0px; }
+  .app { grid-template-columns: 1fr; }
+  .side { position: fixed; left: 0; top: 0; width: 216px; z-index: 80;
+    transform: translateX(-100%); transition: transform .18s ease; }
+  .side.open { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.4); }
+  #navtoggle { display: inline-flex !important; }
+  .col-7, .col-5, .col-6, .col-4, .col-3 { grid-column: span 12; }
+  .topbar { padding: 0 var(--sp-4); gap: var(--sp-2); }
+  .crumb .desc { display: none; }
+  .stat-inline { display: none; }
+  main { padding: var(--sp-4); }
+  .toolbar { padding: var(--sp-2) var(--sp-4); }
+  .fpanel { width: calc(100vw - 32px); }
+  .lhead { grid-template-columns: 12px 1fr auto; }
+  .lhead .src, .lhead .where, .lhead .nf, .lhead .lvl { display: none; }
+}
+@media (max-width: 600px) {
+  .tile .value { font-size: 24px; }
+  .rangeout { display: none; }
+  .logbar { flex-wrap: wrap; }
+}
+#navtoggle { display: none; align-items: center; justify-content: center;
+  width: 30px; height: 28px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface); cursor: pointer; color: var(--ink-2); flex: none; }
+#navscrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 79; }
+#navscrim[hidden] { display: none; }
+
 /* --- states -------------------------------------------------------------- */
 .skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
   var(--line-2) 63%); background-size: 400% 100%;
@@ -680,6 +724,7 @@ svg { display: block; width: 100%; overflow: visible; }
 
   <div class="main-col">
     <div class="topbar">
+      <button id="navtoggle" aria-label="Toggle navigation">&#9776;</button>
       <div class="crumb"><h1 id="page-title">Overview</h1>
         <span class="desc" id="page-desc"></span></div>
       <span class="grow"></span>
@@ -698,6 +743,7 @@ svg { display: block; width: 100%; overflow: visible; }
     </div>
 
     <main id="main"></main>
+    <div id="navscrim" hidden></div>
   </div>
 </div>
 
@@ -2655,6 +2701,18 @@ async function refresh() {
 }
 
 $("#refresh").addEventListener("click", () => refresh());
+const _side = document.querySelector(".side"), _scrim = $("#navscrim");
+function toggleNav(open) {
+  _side.classList.toggle("open", open);
+  _scrim.hidden = !open;
+}
+$("#navtoggle").addEventListener("click", e => {
+  e.stopPropagation(); toggleNav(!_side.classList.contains("open"));
+});
+_scrim.addEventListener("click", () => toggleNav(false));
+// Selecting a view on a narrow screen should close the drawer behind you.
+document.querySelectorAll(".side nav").forEach(n =>
+  n.addEventListener("click", () => { if (innerWidth <= 900) toggleNav(false); }));
 $("#theme").addEventListener("click", () => {
   const cur = document.documentElement.getAttribute("data-theme");
   const next = cur === "dark" ? "light" : cur === "light" ? "dark"
