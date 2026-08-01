@@ -1,28 +1,35 @@
-# An open app is not a viewer
+# Watchhouse
 
-**Foreground-only concurrency at streaming scale · Team Nirad · Click-a-thon 2026 · SonyLIV track**
+**Foreground-only concurrency at streaming scale** · Team Nirad · Click-a-thon 2026 · SonyLIV track
 
-*"How many people are watching right now?"* sets ad inventory, CDN capacity and
-the price of the next rights package. Counting a session from its first event to
-its last also counts paused players, backgrounded apps and clients that silently
-went away.
+> **In one line:** counting a session from its first event to its last over-reports peak
+> concurrent viewers by **17.4%** — 653 people who were paused, backgrounded, or already gone.
 
-**On the provided dataset that is 653 viewers at peak who were not watching.**
-
-| | Peak concurrent sessions |
+| | |
 |---|---|
-| Naive overlap (session start → session end) | **3,743** |
-| **Foreground-only (`intent ∧ alive`)** | **3,090** |
-| Over-reported audience removed | **653 — 17.4%** |
+| **Reported peak** (session overlap) | 3,743 |
+| **Actually watching** (`intent ∧ alive`) | **3,090** |
+| **Phantom audience** | **653 — 17.4%** |
+| Verified against an independent oracle | 35,902 intervals, **0 divergent** |
+| Full pipeline, end to end | **77 s** |
+| On disk | **4.79 MiB** from a 222 MB CSV |
+| Streaming throughput | **2,028 events/s** |
 
-Worse where it matters most: **live content on Android phones is over-reported by
-26.6%** (448 → 329) — exactly the segment whose concurrency drives live-event
-capacity planning.
+```bash
+python scripts/run_sealed.py --raw <dataset.csv> --content <content.csv>   # the whole thing
+python scripts/dashboard.py                                                # localhost:877
+```
 
-Everything below is measured on this dataset (905,558 events / 10,866 sessions /
-12 days) and computed on ClickHouse Cloud. Nothing is precomputed or cached.
+**What makes this different from a dashboard:** an independently written oracle that the query
+path must agree with exactly, a deterministic fault injector that found three bugs which would
+each have produced confidently wrong numbers, and a written record of everything we got wrong.
+
+- [The seven bugs we shipped and caught](#what-went-wrong-and-what-it-taught-us)
+- [What we would tell SonyLIV](#what-we-would-propose-to-sonyliv)
+- [What we would rather not report](#what-we-would-rather-not-report)
 
 ---
+
 
 ## Contents
 
