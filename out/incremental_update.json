@@ -1,0 +1,27 @@
+{
+  "T0": {
+    "intervals": 20298,
+    "open": 1,
+    "active_hours": 1086.5848,
+    "peak": 3051
+  },
+  "T1_incremental": {
+    "intervals": 27150,
+    "open": 0,
+    "active_hours": 1448.3778,
+    "peak": 3090
+  },
+  "T2_full_rebuild": {
+    "intervals": 27150,
+    "open": 0,
+    "active_hours": 1448.3778,
+    "peak": 3090
+  },
+  "late_events": 173740,
+  "sessions_touched": 4970,
+  "incremental_ms": 2393.5,
+  "incremental_rows_read": 824372,
+  "full_ms": 1343.5,
+  "full_rows_read": 706647,
+  "identical": true
+}
