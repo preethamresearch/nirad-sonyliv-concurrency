@@ -173,6 +173,58 @@ password and the Gemini key both appear in chat history.
 
 ---
 
+## Restarting everything from cold
+
+```bash
+# 1. containers (WSL Docker, NOT Docker Desktop)
+wsl -d Ubuntu-20.04 -u root -- bash -lc 'docker start clickstack redpanda redis langfuse-db langfuse librechat-db librechat'
+
+# 2. dashboard
+python scripts/dashboard.py            # http://localhost:877
+
+# 3. sanity
+python scripts/ch.py                   # Cloud connection
+python scripts/verify_against_oracle.py --raw <raw.csv>   # must PASS
+```
+
+| Surface | URL |
+|---|---|
+| Landing (argument, failures, proposal) | http://localhost:877/ |
+| Dashboards (9 views) | http://localhost:877/app |
+| Deck (15 slides, Ctrl+P to PDF) | http://localhost:877/deck |
+| Original single view | http://localhost:877/classic |
+| ClickStack / HyperDX | http://localhost:8080 |
+| Langfuse | http://localhost:3000 |
+| LibreChat (Gemini 2.5 Flash) | http://localhost:3080 |
+| ClickHouse SQL console | https://s9vfs5b226.ap-south-1.aws.clickhouse.cloud:8443/play |
+
+## Demo runbook (~4 min)
+
+1. **Landing page** — the claim: 653 viewers at peak who were not watching.
+2. **Live Operations** — 56% of sessions rebuffer; click the ANDROID_PHONE
+   bubble to scope the page.
+3. **Concurrency** — open Filters, tick two platforms + `live`. The predicate
+   preview shows the multi-column AND; peak drops 3,090 -> 406.
+4. **Ingestion** — the animated flow is driven by live counters; DLQ and the
+   schema registry are populated by a real run.
+5. **Architecture** — Mermaid topology, then run a catalog query in the
+   playground and read the p50/p95, rows read, parts and marks.
+
+## Verified state at handover
+
+```
+branch  feat/streaming-pipeline-and-ux   (3 commits, clean tree)
+routes  20 checked, 0 failures
+peak    naive 3,743 · foreground 3,090 · over 653 (17.4%)
+parity  oracle 35,902 = clickhouse 35,902
+disk    4.79 MiB from a 222 MB CSV
+```
+
+**The branch is NOT merged to main.** Merge before submitting if judges are
+pointed at main: `git checkout main && git merge --ff-only feat/streaming-pipeline-and-ux`
+
+---
+
 ## Judgement notes
 
 - Judges reward **trade-off reasoning**, not features. Every claim in the docs
