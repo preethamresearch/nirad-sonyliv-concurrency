@@ -46,7 +46,11 @@ from __future__ import annotations
 
 import csv
 import collections
+import os
+import sys
 from dataclasses import dataclass, field
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Periodic liveness sub-types (observed 40.0s cadence). Everything else under
 # event_type='VideoHeartbeat' -- BufferStart, BufferEnd, Seek, video_forward,
@@ -233,17 +237,188 @@ def session_intervals(events, params: Params, dims: dict) -> list[Interval]:
     return out
 
 
+def _parse_range(args):
+    """Parse one byte range of the CSV into per-session event lists.
+
+    Runs in a worker process. Returns plain dicts so the parent can merge them:
+    a session may straddle a chunk boundary, so nothing may be finalised here.
+    Interval derivation happens only after every chunk has been merged.
+    """
+    path, lo, hi, fieldnames, colmap = args
+    sess = collections.defaultdict(list)
+    meta, meta_ts = {}, {}
+    c_sid = colmap["video_session_id"]
+    c_ts = colmap["event_timestamp_ms"]
+    c_type = colmap.get("event_type")
+    c_event = colmap.get("event")
+    # Read binary and decode per line. csv.DictReader takes any iterable of
+    # strings, so a byte-budgeted generator bounds the range exactly --
+    # iterating the text file directly would disable tell() and there would be
+    # no way to know where the chunk ends.
+    def lines():
+        with open(path, "rb") as fb:
+            fb.seek(lo)
+            pos = lo
+            while pos < hi:
+                b = fb.readline()
+                if not b:
+                    return
+                pos += len(b)
+                yield b.decode("utf-8", "replace")
+
+    rdr = csv.DictReader(lines(), fieldnames=fieldnames)
+    for r in rdr:
+            sid = (r.get(c_sid) or "").strip()
+            raw = (r.get(c_ts) or "").strip()
+            if not sid or not raw:
+                continue
+            try:
+                ts = int(raw)
+            except ValueError:
+                continue
+            if ts <= 0:          # same rejection rule as the loader
+                continue
+            sess[sid].append((ts, r.get(c_type, "") if c_type else "",
+                              r.get(c_event, "") if c_event else ""))
+            if sid not in meta_ts or ts < meta_ts[sid]:
+                meta_ts[sid] = ts
+                meta[sid] = {
+                    "video_session_id": sid,
+                    "user_id": r.get(colmap.get("user_id"), ""),
+                    "content_id": r.get(colmap.get("content_id"), ""),
+                    "platform": r.get(colmap.get("platform"), ""),
+                    "country": r.get(colmap.get("country"), ""),
+                    "app_version": r.get(colmap.get("app_version"), ""),
+                }
+    return dict(sess), meta, meta_ts
+
+
+def build_intervals_parallel(path: str, params: Params | None = None, workers: int = 0):
+    """Same result as build_intervals, computed across processes.
+
+    Verified against the serial implementation, which stays as the reference:
+    a faster oracle that disagrees with the slow one is not an oracle. Falls
+    back to serial for small files, where process startup costs more than the
+    parse it saves.
+    """
+    import multiprocessing as mp
+    params = params or Params()
+    workers = workers or max(1, min(8, (os.cpu_count() or 2) - 1))
+    size = os.path.getsize(path)
+    if workers < 2 or size < 32 * 1024 * 1024:
+        return build_intervals(path, params)
+
+    import load  # noqa: E402
+    # Read the header via readline, not the csv iterator: iterating a text file
+    # disables tell(), and we need the byte offset where data begins.
+    with open(path, "rb") as fh:
+        head = fh.readline()
+        data_start = fh.tell()
+    fieldnames = next(csv.reader([head.decode("utf-8", "replace").rstrip("\r\n")]))
+    colmap = {}
+    for name in fieldnames:
+        t = load.ALIASES.get(load._norm(name))
+        if t and t not in colmap:
+            colmap[t] = name
+    for req in ("video_session_id", "event_timestamp_ms"):
+        if req not in colmap:
+            return build_intervals(path, params)   # let the serial path explain
+
+    # Ranges are byte offsets; each worker starts at a row boundary and stops
+    # at the first row that ENDS beyond its range, so no row is read twice and
+    # none is skipped.
+    step = (size - data_start) // workers
+    bounds = [data_start]
+    with open(path, "rb") as fh:
+        for i in range(1, workers):
+            fh.seek(data_start + i * step)
+            fh.readline()
+            if fh.tell() > bounds[-1]:
+                bounds.append(fh.tell())
+    bounds.append(size)
+    ranges = [(path, bounds[i], bounds[i + 1], fieldnames, colmap)
+              for i in range(len(bounds) - 1) if bounds[i] < bounds[i + 1]]
+
+    sess = collections.defaultdict(list)
+    meta, meta_ts = {}, {}
+    try:
+        with mp.Pool(len(ranges)) as pool:
+            for part_sess, part_meta, part_ts in pool.imap_unordered(_parse_range, ranges):
+                for sid, evs in part_sess.items():
+                    sess[sid].extend(evs)
+                for sid, ts in part_ts.items():
+                    if sid not in meta_ts or ts < meta_ts[sid]:
+                        meta_ts[sid] = ts
+                        meta[sid] = part_meta[sid]
+    except Exception as e:
+        # Windows uses spawn, which re-imports __main__ in every worker. That
+        # fails for any entry point that is not an importable file (a -c
+        # snippet, a REPL, some notebook kernels). The oracle is the
+        # correctness gate; it must never be the thing that breaks a run, so
+        # an unavailable pool degrades to the serial path rather than raising.
+        print(f"  oracle: parallel parse unavailable ({type(e).__name__}), "
+              f"falling back to serial", flush=True)
+        return build_intervals(path, params)
+
+    intervals = []
+    for sid, evs in sess.items():
+        intervals.extend(session_intervals(evs, params, meta[sid]))
+    return intervals
+
+
 def build_intervals(path: str, params: Params | None = None):
     """Derive active intervals for every session in a raw CSV."""
     params = params or Params()
     sess = collections.defaultdict(list)
     meta = {}
     meta_ts = {}
-    with open(path, newline="", encoding="utf-8") as fh:
-        for r in csv.DictReader(fh):
-            sid = r["video_session_id"]
-            ts = int(r["event_timestamp"])
-            sess[sid].append((ts, r["event_type"], r["event"]))
+    with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+        rdr = csv.DictReader(fh)
+
+        # Resolve the file's header through the SAME alias table the loader
+        # uses. Hardcoding 'event_timestamp' here made the verifier the most
+        # fragile component in the pipeline: the loader would ingest a renamed
+        # column correctly and then the parity gate -- the thing that proves
+        # the model right -- would crash with a KeyError. A verifier that only
+        # works on the sample file verifies nothing about the sealed one.
+        import load  # noqa: E402
+        col = {}
+        for name in (rdr.fieldnames or []):
+            t = load.ALIASES.get(load._norm(name))
+            if t and t not in col:
+                col[t] = name
+        need = ("video_session_id", "event_timestamp_ms", "event_type")
+        absent = [c for c in need if c not in col]
+        if absent:
+            raise KeyError(
+                f"oracle cannot verify {os.path.basename(path)}: no column maps to "
+                f"{', '.join(absent)}. Header was: {', '.join(rdr.fieldnames or [])}")
+
+        c_sid, c_ts = col["video_session_id"], col["event_timestamp_ms"]
+        c_type = col["event_type"]
+        c_event = col.get("event")
+
+        def opt(row, target):
+            src = col.get(target)
+            return row.get(src, "") if src else ""
+
+        for r in rdr:
+            sid = (r.get(c_sid) or "").strip()
+            raw_ts = (r.get(c_ts) or "").strip()
+            if not sid or not raw_ts:
+                continue        # DLQ-class row; the loader counted it already
+            try:
+                ts = int(raw_ts)
+            except ValueError:
+                continue
+            # Must match the loader's rejection rule exactly. The loader drops
+            # timestamp <= 0; Python parses '-1785062604187' as a perfectly
+            # good int, so without this the oracle keeps rows ClickHouse never
+            # stored and parity compares two different populations.
+            if ts <= 0:
+                continue
+            sess[sid].append((ts, r.get(c_type, ""),
+                              r.get(c_event, "") if c_event else ""))
             # Attribute dimensions from the session's EARLIEST event by
             # timestamp -- argMin, matching sql/02_intervals.sql exactly.
             # 95 sessions change platform and 120 change user_id mid-session,
@@ -254,11 +429,11 @@ def build_intervals(path: str, params: Params | None = None):
                 meta_ts[sid] = ts
                 meta[sid] = {
                     "video_session_id": sid,
-                    "user_id": r["user_id"],
-                    "content_id": r["content_id"],
-                    "platform": r["platform"],
-                    "country": r["country"],
-                    "app_version": r["app_version"],
+                    "user_id": opt(r, "user_id"),
+                    "content_id": opt(r, "content_id"),
+                    "platform": opt(r, "platform"),
+                    "country": opt(r, "country"),
+                    "app_version": opt(r, "app_version"),
                 }
     intervals = []
     for sid, evs in sess.items():

@@ -1,24 +1,13 @@
-# Foreground-only concurrency at streaming scale
+# An open app is not a viewer
 
-**Team Nirad · Click-a-thon 2026 · SonyLIV track**
+**Foreground-only concurrency at streaming scale · Team Nirad · Click-a-thon 2026 · SonyLIV track**
 
-*"How many people are watching right now?"* is the most-asked question in a
-streaming business and one of the hardest to answer honestly. An open app is
-not a watching viewer. Counting paused, backgrounded and silent sessions
-inflates the audience, and every ad-load, capacity and content decision made
-on that dashboard inherits the error.
+*"How many people are watching right now?"* sets ad inventory, CDN capacity and
+the price of the next rights package. Counting a session from its first event to
+its last also counts paused players, backgrounded apps and clients that silently
+went away.
 
-This is a concurrency model on ClickHouse that counts **only genuinely active
-playback**, answers filtered minute-grain dashboard queries from a serving
-layer rather than from raw session history, and absorbs late heartbeats
-incrementally instead of rebuilding.
-
----
-
-## The result
-
-Measured on the provided dataset (905,558 events / 10,866 sessions / 12 days),
-computed on ClickHouse Cloud:
+**On the provided dataset that is 653 viewers at peak who were not watching.**
 
 | | Peak concurrent sessions |
 |---|---|
@@ -26,203 +15,334 @@ computed on ClickHouse Cloud:
 | **Foreground-only (`intent ∧ alive`)** | **3,090** |
 | Over-reported audience removed | **653 — 17.4%** |
 
-Segment-level it is worse where it matters most: **live content on Android
-phones is over-reported by 26.6%** (448 → 329), and that is exactly the
-segment where ad load and capacity are most expensive to get wrong.
+Worse where it matters most: **live content on Android phones is over-reported by
+26.6%** (448 → 329) — exactly the segment whose concurrency drives live-event
+capacity planning.
 
-One representative session runs **1,692 s wall-clock with ~173 s of real
-playback** — a 10× overcount — because it sat backgrounded for 25 minutes in
-the middle.
+Everything below is measured on this dataset (905,558 events / 10,866 sessions /
+12 days) and computed on ClickHouse Cloud. Nothing is precomputed or cached.
+
+---
+
+## Contents
+
+- [The model](#the-model) — and the two variants we rejected
+- [Architecture](#architecture)
+- [What went wrong](#what-went-wrong-and-what-it-taught-us) — seven post-mortems
+- [Verification](#verification)
+- [What we would rather not report](#what-we-would-rather-not-report)
+- [What we would propose to SonyLIV](#what-we-would-propose-to-sonyliv)
+- [Running it](#running-it)
 
 ---
 
 ## The model
 
-The problem asks to exclude three things: paused, backgrounded, and
-heartbeat-missing. They are not three cases of one rule. They are **two
-independent signals**, and the answer is their intersection.
-
 ```
-intent_playing   toggled ONLY by explicit transitions
-                 open  : VideoPlay, AppForegrounded, event='resume'
-                 close : event='pause', AppBackgrounded, VideoSessionEnd
-
-client_alive     false during total event silence > 120 s
-
-active           intent_playing AND client_alive
+active = intent_playing AND client_alive
 ```
 
-**Why not one state machine.** We built that first. It closed on a heartbeat
-gap and needed an explicit `resume` to reopen — wrong for a network drop
-mid-playback, where beats stop and return with no `resume` because the user
-never paused. It undercounts the rest of the session.
+**`intent_playing`** is toggled only by explicit transitions — VideoPlay,
+AppForegrounded and `resume` open it; `pause`, AppBackgrounded and
+VideoSessionEnd close it. Transitions are *collapsed*, never paired: in 65% of
+sessions the pause/resume counts do not balance.
 
-**Why heartbeats cannot open an interval.** The mirror error, and the one most
-teams will make. We measured it: **a foreground pause keeps emitting
-heartbeats — 15,660 of 19,060 (82%), median 6 beats within 120 s.** Treating
-beat presence as activity counts paused time as watching, which is the exact
-overcount this problem exists to prevent.
+**`client_alive`** is false during total event silence beyond 120 s — three times
+the **measured** 40 s heartbeat cadence.
 
-### Four measurements that drove the design
+Both conditions are required, and we tested the alternatives:
 
-| Finding | Evidence |
+| Rejected approach | Why it fails |
 |---|---|
-| Heartbeat cadence is **40 s, not the 60 s the data dictionary claims** | p90 = p95 = 40.0 s |
-| `pause`/`resume` are **not event types** — they hide inside `event_type='VideoHeartbeat'` as the `event` sub-field | filtering on `event_type` silently counts all paused time as watching |
-| State signals **do not balance** — transitions must be collapsed, never paired | `pause ≠ resume` in 65% of sessions; `bg ≠ fg` in 466 |
-| Gap threshold of 120 s = 3× cadence fires on client death, not jitter | p99 gap 96.4 s; only 0.894% exceed 120 s |
+| Close on a heartbeat gap alone | Needs an explicit `resume` to reopen → **undercounts a network drop mid-playback** |
+| Open on heartbeats | **Overcounts every foreground pause** — and 82% of foreground pauses keep emitting heartbeats |
+
+### Facts we measured rather than assumed
+
+| Fact | Value | Why it matters |
+|---|---:|---|
+| Heartbeat cadence (p90) | **40.0 s** | The data dictionary says 60 s. It is wrong. |
+| Cadence per platform | **40.0 s on all 10** | Device and app version do not change it — one threshold is justified |
+| Foreground pauses still emitting | **82%** | Why liveness alone cannot mean "watching" |
+| Sessions where pause ≠ resume | **65%** | Transitions must be collapsed, never paired |
+| Sessions with unstable dimensions | **120** | Attribute by `argMin` on event time or a session double-counts |
+| `pause` / `resume` are not event types | — | They hide inside `event_type='VideoHeartbeat'` as the `event` sub-field |
 
 ---
 
 ## Architecture
 
-```
-raw_events                905,558   SharedMergeTree
-  ORDER BY (video_session_id, event_timestamp_ms)   session-contiguous
-  PARTITION BY toDate(session_start)                a session never splits
-      │
-      ▼  array algebra in ClickHouse — no cursor, no data leaves the database
-session_active_intervals   35,902   SharedReplacingMergeTree(version)
-      │
-      ├── SEALED (closed) ──▶ concurrency_minute_delta      31,521 rows
-      │                       +1 at start, −1 after end
-      │                       ORDER BY (minute, dims…) + PROJECTION by_dimension
-      │                       concurrency_hourly_checkpoint  1,964 rows
-      │                       absolute level at each hour boundary
-      │
-      └── HOT (open) ───────▶ open_minute_delta  (VIEW, read-time)
-                              bounded by concurrency, not retention
+```mermaid
+flowchart LR
+  APP["SonyLIV clients"] --> K["Kafka / Redpanda<br/>6 partitions<br/>keyed by session"]
+  SR["Schema registry"] -. governs .-> K
+  K --> V["Validator<br/>required-column contract"]
+  V --> D["Dedup<br/>Redis SETNX + TTL"]
+  V -- rejected --> DLQ["DLQ<br/>topic + table<br/>reason attached"]
+  D <--> R["Redis<br/>open sessions"]
+  D --> RAW["raw_events<br/>ORDER BY session, ts"]
+  RAW --> MV["Materialized views"]
+  MV --> IV["session_active_intervals"]
+  IV --> DL["concurrency_minute_delta"]
+  DL --> CP["hourly checkpoints"]
+  DL --> API["Serving API"]
+  CP --> API
+  R --> API
+  API --> UI["8 dashboards"]
+  API --> MCP["MCP server"]
+  RAW -. traced .-> OBS["ClickStack / OTel"]
+  API -. traced .-> OBS
 
-served:  concurrency_delta_all = sealed ∪ hot
-query :  checkpoint anchor + deltas since  →  cost ∝ range, not retention
+  classDef built fill:#2a78d6,stroke:#1c5cab,color:#fff;
+  classDef design fill:#f0efec,stroke:#898781,color:#52514e,stroke-dasharray:4 3;
+  class APP,K,V,D,DLQ,R,RAW,IV,DL,CP,API,UI,MCP,OBS built;
+  class SR,MV design;
 ```
+
+Solid = running. Dashed = designed and labelled as such — a diagram that implies
+more than it runs survives exactly one question.
 
 **Deltas, not a minute grid.** Two rows per interval regardless of duration:
-**31,521 rows against the 145,821** a per-minute explosion needs — 4.6× smaller,
-and the ratio worsens as sessions lengthen.
+**31,521 rows against the 145,821** a per-minute explosion needs. A minute grid
+grows with total *watch time*; a delta model grows with the number of *intervals*,
+and the gap widens as sessions lengthen — precisely what happens during live events.
 
-**Ordering was chosen by measurement, and our first choice was wrong.** We
-ordered `(platform, country, video_type, content_id, minute)`; instrumenting
-`read_rows` showed a one-hour query still read all 31,521 rows, because a
-predicate on a trailing key column cannot prune granules. Every concurrency
-question carries a time range, so `minute` now leads, with a `PROJECTION`
-preserving dimension-first access.
+**Ordering was chosen by measurement, and our first choice was wrong.** We ordered
+`(platform, country, video_type, content_id, minute)`; instrumenting `read_rows`
+showed a one-hour query still read all 31,521 rows, because a predicate on a
+*trailing* key column cannot prune granules. `minute` now leads, with a
+`PROJECTION` preserving dimension-first access.
 
 **Peak cannot be pre-aggregated.** It is a max over a running total and is not
 additive across dimensions — `platform` peaks at a different minute than
-`platform + country`. Deltas stay at full grain and the cumulative sum runs
-over whatever slice the filter selects.
+`platform + country`. Platform peaks sum to 3,215 against a true peak of 3,090.
+
+---
+
+## What went wrong, and what it taught us
+
+Every item is a bug we shipped and then caught. Most were caught by building
+something adversarial, not by re-reading the code.
+
+### 1. The sealed-day loader bound CSV columns by position
+
+The jury told us the judged dataset would be wider and dirtier. Positional
+binding against a file with an extra column **does not fail** — it shifts every
+value one column left and loads `platform` into `country`. Wrong answers that
+look right are the worst outcome available on judging day.
+
+Worse: `run_sealed.py` had *its own copy* of the insert, so hardening the shared
+loader did nothing for the command that actually runs. Both paths now match by
+name through an alias table, stage as `String`, cast in SQL, and **abort loudly**
+when a required column cannot be resolved.
+
+> Found by `scripts/inject_faults.py` — 20 fault classes, deterministic seed.
+
+### 2. The verifier only worked on the sample file
+
+Our independent oracle hardcoded the header `event_timestamp`. Feed it a file
+where that column is renamed and it dies with a `KeyError` — so the loader would
+ingest a drifted schema correctly and **the thing meant to prove it right would
+crash**.
+
+Then a subtler one: the loader zeroed unparseable timestamps while the oracle
+skipped them, so parity was comparing **two different populations**. Both now
+reject identically, matching the streaming path.
+
+### 3. The obvious concurrency query is wrong by 24%
+
+Writing the natural interval-overlap query gives **2,353** where the truth is
+**3,090**. An interval that opens and closes inside the same minute contributes
+`+1` and `−1` to that minute and cancels itself out. The fix is minute
+containment — close at the minute *after* the end minute.
+
+This is the best argument for the oracle existing: the wrong number is plausible,
+and it errs in the direction that flatters you.
+
+### 4. Two of four dashboard filters were silently ignored
+
+The delta tables are keyed by `(platform, country, video_type, content_id)`.
+`category` and `close_reason` are not among them — so selecting a category
+narrowed nothing and the headline number did not move. A reader would have
+trusted it.
+
+`category` now resolves through `content_id → content_dim` and genuinely filters
+both curves. `close_reason` describes how an interval *ended* and is not a slice
+of concurrency at all, so each view declares which filters it can honour and the
+UI renders only those. **An ignored filter is worse than an absent one.**
+
+### 5. We were confidently wrong about compression
+
+`DoubleDelta` looks obviously right for 40-second heartbeats. It is wrong here:
+the sort key is `(video_session_id, event_timestamp_ms)`, so rows are ordered by
+**session, not time** — timestamps jump at every session boundary and
+DoubleDelta's second difference amplifies the jump.
+
+| Variant | Size | vs baseline |
+|---|---:|---|
+| baseline (DoubleDelta) | 3.53 MiB | — |
+| **`event_timestamp_ms` → Delta** | **2.98 MiB** | **−15.7%** |
+| both timestamp columns → Delta | 2.90 MiB | **−17.1%** |
+| `content_id` → T64 | 3.73 MiB | +5.6% worse |
+| `user_id` → LowCardinality | 3.53 MiB | −0.1% |
+| ZSTD(6) everywhere | 3.52 MiB | −0.4%, ~20% more insert CPU |
+| Gorilla | — | rejected by the server: it is a float codec |
+
+Three of four hypotheses were wrong. Reproduce with `python scripts/codec_bench.py`.
+
+**On "aggressive compression":** ZSTD *decompression* speed is nearly independent
+of level, so query latency barely moves and memory does not spike. The cost lands
+entirely on ingest CPU and background merges. The real win was structural, not
+turning the dial up.
+
+### 6. Our first CDC implementation captured nothing
+
+The natural design — join the incoming row against the current table to find its
+predecessor — **cannot work**. A materialized view fires *after* the block is
+inserted, so the lookup already returns the new value. "Previous" equals
+"current" and every change reads as a no-op. Caught by changing a category and
+watching the log stay empty.
+
+It now appends every version and diffs with a window function at read time, which
+is also the only formulation that stays correct when two versions land in the
+same block.
+
+### 7. We mis-measured our own throughput by 8×
+
+The consumer reported 251 events/s. It was counting **idle polling as work** —
+the loop ran for its full time budget after the topic drained. Real throughput is
+**2,028 events/s**. We had already extrapolated the wrong figure to "7 hours for a
+10× file" before catching it.
+
+A benchmark that measures the harness instead of the system is worse than no
+benchmark, because it gets quoted.
+
+### Bonus: a ClickHouse Cloud gotcha
+
+`system.parts_columns.column_data_compressed_bytes` returns **0** on
+SharedMergeTree. We had shipped a "footprint by column" query that would have
+shown a judge a table of zeros. Totals come from `system.parts.bytes_on_disk`;
+the per-column breakdown is reported as unavailable rather than faked.
 
 ---
 
 ## Verification
 
 The answer key is private, so agreement between independent implementations is
-the only correctness evidence we can generate ourselves. **Three paths must
-agree on every query:**
+the only correctness proof we can generate ourselves.
 
-| Path | Proves |
-|---|---|
-| `scripts/oracle.py` — Python, walks raw intervals | ground truth; deliberately simple and auditable |
-| ClickHouse cumulative sum from t0 | the delta model is right |
-| Checkpoint-anchored serving query | the optimisation did not change the answer |
+- **`scripts/oracle.py`** is a separately written, deliberately boring reference
+  implementation. It is not the query path — it is what keeps the query path honest.
+- **Parity is exact:** 35,902 intervals, 0 only-oracle, 0 only-ClickHouse.
+- **10 benchmark queries** compare oracle and ClickHouse answers; the run fails if
+  any disagree.
+- **Every run writes provenance** to `out/sealed/<run_id>/` and `sony.pipeline_runs`:
+  input checksums, per-stage row counts and timings, git commit, and ClickHouse's
+  own query log. *No pipeline evidence, no credit.*
 
-`verify_against_oracle.py` compares **every interval**, not aggregates —
-35,902 of 35,902 identical on boundaries, close reasons and open flags.
+### Tested against dirty data, not just clean data
 
-It has earned its keep. Bugs it caught that would each have shipped a
-confidently wrong number:
+`scripts/inject_faults.py` produces a deterministic dirty dataset — 20 fault
+classes across schema drift, event quality, timestamps, dimensions and structure,
+with a manifest recording exactly what was injected so findings can be checked
+against ground truth.
 
-1. **A Cloud-only silent dimension failure.** A dictionary is a *node-local*
-   cache and `SYSTEM RELOAD DICTIONARY` without `ON CLUSTER` refreshes one
-   node. On Cloud the derive ran against a stale node, every interval got
-   `video_type=''`, and `video_type='live'` answered **0 instead of 469** —
-   while the dictionary reported `LOADED` with 33,464 elements. A single-node
-   local server cannot reproduce it.
-2. `WITH FILL` started at the first *present* row, not `t0`, so a slice
-   existing only late in the range averaged over 119 minutes instead of 17,029.
-3. Checkpoints used *instant* containment while deltas used *minute*
-   containment.
-4. The checkpoint path dropped minute `t0` on hour boundaries — every "peak
-   hour" query.
-5. A non-deterministic sort: `pause` and `AppBackgrounded` share a millisecond
-   in 8,280 cases and the two engines broke the tie differently.
+The rehearsal on a shuffled, renamed, widened, 218 MB dirty file found bugs 1, 2
+and 4 above. Against clean data the pipeline still returns exact parity.
 
 ---
 
-## Open sessions
+## What we would rather not report
 
-**The provided dataset cannot test the most heavily judged behaviour.** All
-10,866 sessions have both a start and an end; not one is open. Yet the unseen
-day is documented to contain them.
+- **Multi-device is undercounted.** Of 95 sessions on more than one platform,
+  **82 genuinely overlap in time** — the same viewer on phone and TV at once.
+  `argMin` attributes the session to its first platform and emits one interval,
+  so we count one stream where there are two. 0.75% of sessions.
+- **Checkpoints barely pay on this dataset.** ~1.01× fewer rows read, because 94%
+  of events fall in a single day. The design wins at a retention this dataset does
+  not have. We report the measurement, not the theory.
+- **The incremental path is slower than a full rebuild here**, for the same reason.
+- **There is no geography.** Every event is `country = india`, with no state, city,
+  region or CDN field. The Languages view infers region from audio language and
+  says so on the card — 20.6% of sessions are English and cannot be placed at all.
 
-`scripts/make_fixture.py` manufactures the case by cutting the real stream at
-an artificial "now": **3,526 open sessions (47.4%)**. It found a crash
-immediately — a truncated session with heartbeats but no state transitions
-gives an empty transition array, and `arrayPushFront(arrayPopBack([]), 0)` is
-length 1 against length 0, killing the whole `INSERT`. Unreachable on the
-provided data; certain on any day containing open sessions.
+---
 
-A late heartbeat costs **one replaced row**. Nothing is rebuilt.
-`demo_incremental.py` proves incremental re-derivation is byte-identical to a
-full rebuild.
+## What we would propose to SonyLIV
+
+Findings that point at changes upstream — in the client and the event schema, not
+just in the warehouse.
+
+**1. Emit an explicit `playback_state` on every heartbeat.**
+Today `pause`/`resume` hide inside `event_type='VideoHeartbeat'`, and 82% of
+foreground pauses keep emitting liveness beats. Every consumer must reconstruct
+intent from a state machine, and each will do it slightly differently. One
+authoritative field removes an entire class of disagreement between teams
+reporting the same metric.
+
+**2. Add a `device_instance_id`, distinct from the session id.**
+82 sessions genuinely stream on two devices at once and the schema cannot express
+it, so any model must double-count or undercount. This matters directly for
+concurrency-based licensing terms.
+
+**3. Fix the documented heartbeat cadence.**
+The dictionary says 60 s; the measured value is **40.0 s at p90 on all ten
+platforms**. Any gap threshold derived from the documented figure — including
+liveness alerting — is calibrated 50% too loose.
+
+**4. Normalise language at the producer.**
+`hin` / `HIN` / `hin-hindi` are one language; `unk` / `non` / `und` / empty all
+mean "not stated". The first event of a session usually reports `unk` before the
+audio track resolves, so the naive read is that **80% of sessions have no
+language** when the true figure is **0.5%**. That artefact is the difference
+between "we have no language data" and "we have it for 99.5% of sessions".
+
+**5. Carry a coarse region, even at state level.**
+Concurrency without geography cannot answer the CDN-provisioning question it
+exists to serve. One low-cardinality field would do it, and is far less sensitive
+than precise location.
 
 ---
 
 ## Running it
 
 ```bash
-cp .env.example .env          # ClickHouse Cloud host / password
-
-python scripts/load.py --schema --content <content.csv> --raw <raw.csv>
-python scripts/verify_against_oracle.py --raw <raw.csv>
-python scripts/benchmark.py --raw <raw.csv> --json out/benchmark.json
-python scripts/dashboard.py                      # http://localhost:877
-
-# the sealed day, end to end, one command
-python scripts/run_sealed.py --raw <sealed.csv> --content <content.csv>
+python scripts/ch.py                                       # connection check
+python scripts/run_sealed.py --raw X.csv --content Y.csv   # THE sealed-day command
+python scripts/verify_against_oracle.py --raw X.csv        # parity gate (must PASS)
+python scripts/benchmark.py --raw X.csv                    # 3-way agreement + latency
+python scripts/dashboard.py                                # http://localhost:877
+python scripts/codec_bench.py                              # compression, measured
+python scripts/inject_faults.py --raw X.csv --out dirty.csv --faults all
 ```
 
-`run_sealed.py` is the **same code path** as everything above — no sealed-day
-special case, because a special case is a step someone gets wrong at 09:00
-while also recording a demo. It writes input SHA-256, the git commit,
-per-stage row counts and timings, an oracle parity check, and ClickHouse's own
-`query_log` to `out/sealed/<run_id>/`.
+`run_sealed.py` is the **same code path** as everything else — no sealed-day
+special case, deliberately.
+
+### Streaming pipeline
+
+```bash
+python scripts/stream_pipeline.py --setup
+python scripts/stream_pipeline.py --produce dirty.csv
+python scripts/stream_pipeline.py --consume --for 120
+python scripts/stream_pipeline.py --stats
+```
+
+Kafka (Redpanda, 6 partitions, keyed by session) → validate → Redis dedup →
+batched ClickHouse insert, with rejects going to a DLQ topic *and*
+`sony.stream_dlq` with the parse reason attached. Offsets commit **after** the
+sink: at-least-once delivery plus an idempotent sink. A full replay dropped
+**32,815 duplicates with zero double-counting**.
+
+### Where to look
+
+| | |
+|---|---|
+| `/` | Landing page — the argument, the failures, the proposal |
+| `/app` | 8 dashboards as a guided story, steps 1–8 |
+| `/deck` | 15-slide deck (print to PDF) |
+| `/classic` | The original single-view dashboard |
 
 ---
 
-## Observability — ClickStack
-
-The pipeline observes itself in ClickHouse. `scripts/otel.py` is a stdlib-only
-OTLP exporter (no `opentelemetry-sdk`: a pip failure at 03:00 on the one
-laptop we have is a worse outcome than 150 lines of JSON assembly).
-
-- `clickhouse.query` — every statement with `read_rows`/`read_bytes` from
-  ClickHouse's own summary header. Rows read is what shows whether the sort key
-  and projection are earning their keep; wall time on a laptop measures the laptop.
-- `pipeline.<stage>` — load / derive / serve / benchmark with row counts.
-- `ingest.lag_seconds` — for a streaming concurrency service this decides
-  whether the answer is trustworthy at all.
-
-Tracing is env-configured and silently disables when unset. The observability
-layer must never be able to fail the pipeline it watches.
-
----
-
-## Layout
-
-```
-sql/01_schema.sql        landing tables, UTC-pinned, Int64 sentinel-safe
-sql/02_intervals.sql     the model: intent ∧ alive, as array algebra
-sql/03_serving.sql       deltas, checkpoints, projection, hot tier
-scripts/oracle.py        independent reference implementation
-scripts/verify_against_oracle.py   interval-by-interval parity gate
-scripts/benchmark.py     3-way agreement + latency + rows read
-scripts/run_sealed.py    one-command sealed-day harness
-scripts/demo_incremental.py        late-heartbeat absorption proof
-scripts/make_fixture.py  manufactures open sessions
-scripts/dashboard.py + web/        live visualisation
-docs/DESIGN.md           the full trade-off argument
-```
-
-Licensed MIT.
+MIT licensed. Built for Click-a-thon 2026.

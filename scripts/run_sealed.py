@@ -130,20 +130,37 @@ def main():
     if a.content:
         t = time.time()
         ch.execute("TRUNCATE TABLE IF EXISTS sony.content_dim")
-        with open(a.content, "rb") as fh:
-            ch.execute("INSERT INTO sony.content_dim (content_id, title, video_type, category) FORMAT CSV",
-                       body=fh, settings={"input_format_csv_skip_first_lines": "1"})
+        # Same reasoning as raw_events below: match by name, never by position.
+        import load  # noqa: E402
+        load.load_resilient("sony.content_dim",
+                            ["content_id", "title", "video_type", "category"],
+                            a.content, load.CONTENT_CASTS,
+                            aliases=load.CONTENT_ALIASES)
         ch.execute("SYSTEM RELOAD DICTIONARY sony.content_dict")
         tr.stage("load_content", rows=int(ch.scalar("SELECT count() FROM sony.content_dim")),
                  seconds=round(time.time() - t, 2))
 
+    # Header-matched load, NOT positional binding.
+    #
+    # This used to be a bare `INSERT ... FORMAT CSV` with a hardcoded column
+    # list, which silently assumed the sealed file has exactly our 13 columns
+    # in exactly our order. Against a wider or reordered file that does not
+    # error -- it shifts every value one column left and loads platform into
+    # country. Confidently wrong numbers are the worst outcome available on
+    # judging day, so the sealed path now goes through the same resilient
+    # loader the rest of the project uses: match by name, stage as String,
+    # cast in SQL, abort loudly if a REQUIRED column cannot be resolved.
     t = time.time()
-    with open(a.raw, "rb") as fh:
-        ch.execute(f"INSERT INTO sony.raw_events ({', '.join(benchmark_raw_cols())}) FORMAT CSV",
-                   body=fh, settings={"input_format_csv_skip_first_lines": "1",
-                                      "max_insert_block_size": "1048576"})
+    import load  # noqa: E402
+    load_report = load.load_resilient("sony.raw_events", load.RAW_COLS, a.raw, load.CASTS)
     n_raw = int(ch.scalar("SELECT count() FROM sony.raw_events"))
     load_s = round(time.time() - t, 2)
+    # Schema drift belongs in the trace, not only on someone's terminal.
+    tr.stage("schema_match",
+             columns_matched=len(load.RAW_COLS) - len(load_report["missing"]),
+             unrecognised=load_report["unknown"],
+             missing_defaulted=load_report["missing"],
+             staged_rows=load_report["staged"])
     # Ingest lag = wall clock now minus the newest event we hold. For a live
     # concurrency service this is the metric that decides whether the answer
     # is trustworthy: concurrency computed off stale ingest is wrong in a way

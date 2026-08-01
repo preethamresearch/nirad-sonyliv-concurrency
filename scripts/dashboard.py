@@ -41,39 +41,150 @@ def q_ident(v):
     return "'" + str(v).replace("'", "''") + "'"
 
 
-def where_clause(args, prefix=""):
+#: dimensions carried by BOTH the delta tables and the naive `enriched` CTE.
+#: anything outside this set cannot scope the two curves symmetrically, and a
+#: filter that moves one curve but not the other makes the gap a lie.
+SHARED_DIMS = ("platform", "country", "video_type")
+
+#: session_active_intervals carries these too. Breakdown/table endpoints read
+#: from it directly and may slice finer than the curves can.
+INTERVAL_DIMS = SHARED_DIMS + ("category", "close_reason")
+
+#: Which filters a given view can actually honour. The UI reads this and shows
+#: only those controls, because a filter that is displayed but ignored is the
+#: worst option available: the reader narrows the slice, the number does not
+#: move, and they trust it. `close_reason` describes how an interval ENDED and
+#: is not a slice of concurrency, so it exists only where intervals are the
+#: unit of analysis.
+VIEW_DIMS = {
+    "overview":  ("platform", "video_type", "category"),
+    "ops":       ("platform", "video_type", "category", "close_reason"),
+    "analyst":   ("platform", "video_type", "category"),
+    "product":   ("platform", "video_type", "category", "close_reason"),
+    "regions":   ("platform",),
+    "pipeline":  (),
+    "live":      (),
+    "arch":      (),
+}
+
+
+def _vals(args, key):
+    """A filter value is a comma-separated multi-select; '' / 'all' means no filter."""
+    raw = args.get(key)
+    if not raw or raw == "all":
+        return []
+    return [v for v in (s.strip() for s in raw.split(",")) if v and v != "all"]
+
+
+def where_clause(args, prefix="", dims=SHARED_DIMS):
     parts = []
-    for key in ("platform", "country", "video_type"):
-        v = args.get(key)
-        if v and v != "all":
-            parts.append(f"{prefix}{key} = {q_ident(v)}")
+    for key in dims:
+        vs = _vals(args, key)
+        if not vs:
+            continue
+        if len(vs) == 1:
+            parts.append(f"{prefix}{key} = {q_ident(vs[0])}")
+        else:
+            parts.append(f"{prefix}{key} IN ({','.join(q_ident(v) for v in vs)})")
     return (" AND " + " AND ".join(parts)) if parts else ""
 
 
+def delta_where(args, prefix=""):
+    """Predicate for the delta tables, which are keyed by
+    (platform, country, video_type, content_id).
+
+    `category` is NOT a column there, but it is reachable: content_id resolves
+    to a category through content_dim, so the filter becomes a subquery on
+    content_id. Without this the UI offered a category filter that silently
+    did nothing to the concurrency curve -- the reader narrowed the slice, the
+    number did not move, and they believed it. An ignored filter is worse than
+    an absent one.
+    """
+    w = where_clause(args, prefix=prefix, dims=SHARED_DIMS)
+    cats = _vals(args, "category")
+    if cats:
+        vals = ",".join(q_ident(c) for c in cats)
+        w += (f" AND {prefix}content_id IN (SELECT content_id FROM sony.content_dim "
+              f"FINAL WHERE category IN ({vals}))")
+    return w
+
+
+#: Cached values expire. The original cache was populated once per process and
+#: never invalidated, which is fine for a laptop demo and wrong in production:
+#: after an ingest the time bounds are stale, so the dashboard keeps offering a
+#: range that ends before the newest data and quietly hides it. A short TTL
+#: costs one cheap query a minute and removes a whole class of "why is my data
+#: missing" incident.
+CACHE_TTL_S = float(os.environ.get("DASHBOARD_CACHE_TTL", "60"))
+_cache = {}
+
+
+def _cached(key, produce):
+    hit = _cache.get(key)
+    if hit and (time.time() - hit[0]) < CACHE_TTL_S:
+        return hit[1]
+    val = produce()
+    _cache[key] = (time.time(), val)
+    return val
+
+
+
+def parallel_queries(jobs, workers=8):
+    """Run independent ClickHouse queries concurrently.
+
+    Every round trip to ap-south-1 costs 300-600 ms, so an endpoint issuing
+    nine sequential scalars spends five seconds waiting on a network it could
+    have used once. These queries have no dependency on each other; only the
+    habit of writing them in a list made them serial.
+
+    ch.LAST_SUMMARY is a module global and races across threads, so each job
+    captures its own rows-read inside the worker rather than reading it after.
+    """
+    import concurrent.futures as _fut
+    out, rows = {}, {}
+
+    def run(item):
+        key, sql = item
+        text, _ = ch.query(sql)
+        return key, text, int(ch.LAST_SUMMARY.get("read_rows", 0) or 0)
+
+    with _fut.ThreadPoolExecutor(max_workers=min(workers, max(1, len(jobs)))) as ex:
+        for key, text, n in ex.map(run, list(jobs.items())):
+            out[key], rows[key] = text, n
+    return out, rows
+
+
 def bounds():
-    global _bounds
-    if _bounds is None:
-        lo = ch.scalar("SELECT toString(min(minute)) FROM sony.concurrency_delta_all")
-        hi = ch.scalar("SELECT toString(max(minute)) FROM sony.concurrency_delta_all")
-        _bounds = (lo, hi)
-    return _bounds
+    def produce():
+        # min and max in one pass; two scalars meant two round trips to Cloud
+        # for a single scan's worth of work.
+        text, _ = ch.query("SELECT toString(min(minute)), toString(max(minute)) "
+                           "FROM sony.concurrency_delta_all")
+        lo, hi = text.strip().split(chr(9))
+        return (lo, hi)
+    return _cached("bounds", produce)
 
 
 def filters():
-    global _filters
-    if _filters is None:
-        def vals(sql):
-            t, _ = ch.query(sql)
-            return [l for l in t.splitlines() if l]
-        _filters = {
-            "platform": vals("SELECT DISTINCT platform FROM sony.session_active_intervals FINAL "
-                             "WHERE platform != '' ORDER BY platform"),
-            "country": vals("SELECT DISTINCT country FROM sony.session_active_intervals FINAL "
-                            "WHERE country != '' ORDER BY country"),
-            "video_type": vals("SELECT DISTINCT video_type FROM sony.session_active_intervals FINAL "
-                               "WHERE video_type != '' ORDER BY video_type"),
-        }
-    return _filters
+    """Distinct values per dimension, discovered from the data.
+
+    Dimensions come from INTERVAL_DIMS rather than a hand-written list, so
+    adding a dimension in one place makes it appear here automatically instead
+    of being silently absent until someone notices.
+    """
+    def produce():
+        # ONE scan, not one per dimension. The per-dimension version issued five
+        # sequential `DISTINCT ... FINAL` queries and cost ~3s on every cold page
+        # load -- five full passes over the same table to answer five questions
+        # that a single pass answers. groupUniqArray collects them together.
+        cols = ", ".join(
+            f"arraySort(groupUniqArrayIf({d}, {d} != ''))" for d in INTERVAL_DIMS)
+        text, _ = ch.query(
+            f"SELECT {cols} FROM sony.session_active_intervals FINAL",
+            fmt="JSONCompactEachRow")
+        row = json.loads(text.strip().splitlines()[0])
+        return {dim: list(row[i]) for i, dim in enumerate(INTERVAL_DIMS)}
+    return _cached("filters", produce)
 
 
 def series(args):
@@ -81,7 +192,7 @@ def series(args):
     lo, hi = bounds()
     t0 = args.get("from") or lo
     t1 = args.get("to") or hi
-    w = where_clause(args)
+    w = delta_where(args)
     total_rows = 0
     t_start = time.time()
 
@@ -98,8 +209,7 @@ SELECT toString(minute), toInt32(c) FROM (
       TO   toDateTime({q_ident(t1)}, 'UTC') + INTERVAL 1 MINUTE STEP 60))
 WHERE minute >= toDateTime({q_ident(t0)}, 'UTC')
 ORDER BY minute"""
-    fg_text, fg_el = ch.query(fg_sql)
-    total_rows += int(ch.LAST_SUMMARY.get("read_rows", 0) or 0)
+    # placeholder: both curves are issued together below
 
     # --- naive: plain session start -> session end overlap, no state model ---
     # Deliberately recomputed from raw_events rather than stored: it is the
@@ -116,6 +226,7 @@ WITH sess AS (
   FROM sony.raw_events GROUP BY video_session_id),
 enriched AS (
   SELECT s.a AS a, s.b AS b, s.platform AS platform, s.country AS country,
+         s.content_id AS content_id,
          c.video_type AS video_type
   FROM sess AS s
   LEFT JOIN (SELECT content_id, video_type FROM sony.content_dim FINAL) AS c
@@ -135,8 +246,23 @@ SELECT toString(minute), toInt32(c) FROM (
       TO   toDateTime({q_ident(t1)}, 'UTC') + INTERVAL 1 MINUTE STEP 60))
 WHERE minute >= toDateTime({q_ident(t0)}, 'UTC')
 ORDER BY minute"""
-    nv_text, nv_el = ch.query(nv_sql)
-    total_rows += int(ch.LAST_SUMMARY.get("read_rows", 0) or 0)
+    # The two curves are independent queries against the same slice, so they
+    # are issued concurrently rather than one after the other. Each round trip
+    # to ap-south-1 costs 0.3-1.8s and the wall time was simply their sum.
+    # ch.LAST_SUMMARY is module-global and would race, so each thread reports
+    # its own rows-read instead of reading it afterwards.
+    import concurrent.futures as _fut
+
+    def _run(sql):
+        text, _el = ch.query(sql)
+        return text, int(ch.LAST_SUMMARY.get("read_rows", 0) or 0)
+
+    with _fut.ThreadPoolExecutor(max_workers=2) as _ex:
+        _fg = _ex.submit(_run, fg_sql)
+        _nv = _ex.submit(_run, nv_sql)
+        fg_text, fg_rows = _fg.result()
+        nv_text, nv_rows = _nv.result()
+    total_rows += fg_rows + nv_rows
 
     def parse(text):
         out = []
@@ -189,23 +315,514 @@ ORDER BY minute"""
     }
 
 
+
+DELTA_DIMS = SHARED_DIMS + ("content_id",)
+
+
+def facets(args):
+    """Distinct values AND counts under the CURRENT selection.
+
+    Each dimension's own facet excludes that dimension from the predicate --
+    otherwise selecting 'india' would leave 'india' as the only country on
+    offer and the filter would become a one-way door. Issued in parallel: the
+    queries are independent and only habit made them serial.
+    """
+    t_start = time.time()
+    jobs = {}
+    for dim in INTERVAL_DIMS:
+        others = tuple(d for d in INTERVAL_DIMS if d != dim)
+        w = where_clause(args, dims=others)
+        jobs[dim] = (f"SELECT {dim}, uniqExact(video_session_id) AS sessions "
+                     f"FROM sony.session_active_intervals FINAL "
+                     f"WHERE {dim} != '' {w} GROUP BY {dim} ORDER BY sessions DESC")
+    res, rowcounts = parallel_queries(jobs)
+    out = {}
+    for dim, text in res.items():
+        vals = []
+        for line in text.splitlines():
+            if not line:
+                continue
+            v, c = line.split(chr(9))
+            vals.append({"value": v, "sessions": int(c)})
+        out[dim] = vals
+    return {"facets": out, "latency_ms": round((time.time() - t_start) * 1000, 1),
+            "rows_read": sum(rowcounts.values())}
+
+
+def breakdown(args):
+    """Per-value table for one dimension: the rows behind the curve.
+
+    peak is a max over a running total PARTITIONED by the dimension value, so
+    peaks do NOT sum to the overall peak -- different values peak at different
+    minutes. Totals are measured separately rather than summed from the rows,
+    because uniqExact per group double-counts anything in two groups.
+    """
+    dim = args.get("dim") or "platform"
+    if dim not in INTERVAL_DIMS + ("content_id",):
+        raise ValueError(f"unknown dimension {dim!r}")
+    lo, hi = bounds()
+    t0 = args.get("from") or lo
+    t1 = args.get("to") or hi
+    t_start = time.time()
+
+    jobs = {}
+    if dim in DELTA_DIMS:
+        w = delta_where({k: v for k, v in args.items() if k != dim})
+        jobs["peaks"] = f"""
+SELECT toString({dim}) AS g, max(c) AS peak FROM (
+  SELECT {dim}, minute,
+         sum(sum(delta)) OVER (PARTITION BY {dim} ORDER BY minute) AS c
+  FROM sony.concurrency_delta_all
+  WHERE minute <= toDateTime({q_ident(t1)}, 'UTC') {w}
+  GROUP BY {dim}, minute)
+GROUP BY g"""
+    w2 = where_clause(args, dims=tuple(d for d in INTERVAL_DIMS if d != dim))
+    jobs["vals"] = f"""
+SELECT toString({dim}) AS g,
+       uniqExact(video_session_id) AS sessions,
+       count() AS intervals,
+       round(sum(duration_ms) / 3600000.0, 1) AS watch_hours,
+       round(avg(duration_ms) / 1000.0, 1) AS avg_seconds,
+       countIf(is_open) AS open_intervals
+FROM sony.session_active_intervals FINAL
+WHERE toString({dim}) != ''
+  AND active_start <= toDateTime({q_ident(t1)}, 'UTC')
+  AND active_end   >= toDateTime({q_ident(t0)}, 'UTC') {w2}
+GROUP BY g ORDER BY sessions DESC LIMIT 200"""
+    wt = where_clause(args, dims=INTERVAL_DIMS)
+    jobs["totals"] = f"""
+SELECT uniqExact(video_session_id), count(),
+       round(sum(duration_ms) / 3600000.0, 1), countIf(is_open)
+FROM sony.session_active_intervals FINAL
+WHERE active_start <= toDateTime({q_ident(t1)}, 'UTC')
+  AND active_end   >= toDateTime({q_ident(t0)}, 'UTC') {wt}"""
+
+    res, rowcounts = parallel_queries(jobs)
+    peaks = {}
+    for line in res.get("peaks", "").splitlines():
+        if not line:
+            continue
+        g, p = line.split(chr(9))
+        peaks[g] = int(p)
+    out = []
+    for line in res["vals"].splitlines():
+        if not line:
+            continue
+        g, sess, iv, wh, avs, op = line.split(chr(9))
+        out.append({"value": g, "sessions": int(sess), "intervals": int(iv),
+                    "watch_hours": float(wh), "avg_seconds": float(avs),
+                    "open_intervals": int(op), "peak": peaks.get(g)})
+    tsess, tiv, thrs, topen = (res["totals"].strip().split(chr(9)) + ["0"] * 4)[:4]
+    return {"dim": dim, "rows": out,
+            "has_peak": dim in DELTA_DIMS, "peak_is_additive": False,
+            "totals": {"sessions": int(tsess), "intervals": int(tiv),
+                       "watch_hours": float(thrs), "open_intervals": int(topen)},
+            "latency_ms": round((time.time() - t_start) * 1000, 1),
+            "rows_read": sum(rowcounts.values())}
+
+
+
+CATALOG = [
+    {"id": "headline", "name": "Headline: naive vs foreground-only",
+     "note": "The whole submission in one query. 3,743 vs 3,090.",
+     "sql": """SELECT
+  (SELECT max(c) FROM (
+     SELECT sum(sum(d)) OVER (ORDER BY m) AS c FROM (
+       SELECT toDateTime(intDiv(a,60000)*60,'UTC') AS m, 1 AS d FROM
+         (SELECT min(event_timestamp_ms) AS a, max(event_timestamp_ms) AS b
+          FROM sony.raw_events GROUP BY video_session_id)
+       UNION ALL
+       SELECT toDateTime((intDiv(b,60000)+1)*60,'UTC') AS m, -1 AS d FROM
+         (SELECT min(event_timestamp_ms) AS a, max(event_timestamp_ms) AS b
+          FROM sony.raw_events GROUP BY video_session_id))
+     GROUP BY m ORDER BY m)) AS peak_naive,
+  (SELECT max(running) FROM (
+     SELECT sum(sum(delta)) OVER (ORDER BY minute) AS running
+     FROM sony.concurrency_minute_delta GROUP BY minute ORDER BY minute)) AS peak_foreground"""},
+    {"id": "peak_platform", "name": "Peak concurrency per platform",
+     "note": "Cumulative sum PARTITIONED by platform. Peaks do not sum to the total.",
+     "sql": """SELECT platform, max(c) AS peak FROM (
+  SELECT platform, minute,
+         sum(sum(delta)) OVER (PARTITION BY platform ORDER BY minute) AS c
+  FROM sony.concurrency_delta_all GROUP BY platform, minute)
+GROUP BY platform ORDER BY peak DESC"""},
+    {"id": "cadence", "name": "Heartbeat cadence percentiles",
+     "note": "Measured 40.0s at p90 -- the data dictionary says 60s and is wrong.",
+     "sql": """SELECT round(quantile(0.5)(g)/1000,1) p50, round(quantile(0.9)(g)/1000,1) p90,
+       round(quantile(0.99)(g)/1000,1) p99,
+       round(countIf(g > 120000) / count() * 100, 3) AS pct_over_120s
+FROM (SELECT event_timestamp_ms - lagInFrame(event_timestamp_ms)
+        OVER (PARTITION BY video_session_id ORDER BY event_timestamp_ms) AS g,
+      row_number() OVER (PARTITION BY video_session_id
+        ORDER BY event_timestamp_ms) AS seq
+      FROM sony.raw_events)
+WHERE seq > 1"""},
+    {"id": "close_reasons", "name": "Why sessions stopped counting",
+     "note": "evidence_gap is the only inferred close; everything else is observed.",
+     "sql": """SELECT close_reason, count() AS intervals,
+       uniqExact(video_session_id) AS sessions,
+       round(avg(duration_ms)/1000,1) AS avg_seconds
+FROM sony.session_active_intervals FINAL
+GROUP BY close_reason ORDER BY intervals DESC"""},
+    {"id": "multidevice", "name": "Multi-device sessions that truly overlap",
+     "note": "82 of 95 multi-platform sessions overlap in time, not sequential handoff.",
+     "sql": """WITH multi AS (
+  SELECT video_session_id FROM sony.raw_events
+  GROUP BY video_session_id HAVING uniqExact(platform) > 1),
+spans AS (
+  SELECT video_session_id, platform,
+         min(event_timestamp_ms) AS a, max(event_timestamp_ms) AS b
+  FROM sony.raw_events WHERE video_session_id IN (SELECT video_session_id FROM multi)
+  GROUP BY video_session_id, platform)
+SELECT countIf(overlap) AS truly_concurrent, countIf(NOT overlap) AS handoff
+FROM (SELECT video_session_id, max(a) < min(b) AS overlap FROM spans
+      GROUP BY video_session_id)"""},
+    {"id": "storage", "name": "Delta rows vs a minute grid",
+     "note": "Two rows per interval regardless of duration.",
+     "sql": """SELECT
+  (SELECT count() FROM sony.concurrency_minute_delta) AS delta_rows,
+  (SELECT sum(intDiv(active_end_ms,60000)-intDiv(active_start_ms,60000)+1)
+   FROM sony.session_active_intervals FINAL) AS minute_grid_rows"""},
+    {"id": "dlq", "name": "Streaming DLQ by reason",
+     "note": "Malformed events isolated with their parse error, not dropped.",
+     "sql": """SELECT reason, count() AS records, any(detail) AS example
+FROM sony.stream_dlq GROUP BY reason ORDER BY records DESC"""},
+    {"id": "compression", "name": "On-disk footprint",
+     "note": "Per-column figures are unavailable on Cloud -- system.parts_columns "
+             "reports 0 for SharedMergeTree.",
+     "sql": """SELECT p.table AS table,
+       formatReadableSize(sum(p.bytes_on_disk)) AS on_disk,
+       sum(p.rows) AS row_count,
+       round(sum(p.bytes_on_disk) / greatest(sum(p.rows), 1), 2) AS bytes_per_row,
+       count() AS parts
+FROM system.parts AS p
+WHERE p.database = 'sony' AND p.active
+  AND p.table IN ('raw_events','session_active_intervals',
+                  'concurrency_minute_delta','concurrency_hourly_checkpoint')
+GROUP BY p.table ORDER BY sum(p.bytes_on_disk) DESC"""},
+]
+
+#: A playground must not be a write endpoint. Only these may begin a statement.
+_READ_ONLY_HEADS = ("select", "with", "show", "describe", "desc", "explain")
+
+
+def playground(args):
+    """Run a read-only query and report what it actually cost."""
+    sql = (args.get("sql") or "").strip().rstrip(";").strip()
+    if not sql:
+        raise ValueError("no query given")
+    head = sql.split(None, 1)[0].lower() if sql.split() else ""
+    if head not in _READ_ONLY_HEADS:
+        raise ValueError(f"only read-only statements are allowed here "
+                         f"({', '.join(_READ_ONLY_HEADS)}); got {head!r}")
+    if ";" in sql:
+        raise ValueError("one statement at a time")
+
+    runs = max(1, min(int(args.get("runs") or 3), 9))
+    settings = {"readonly": "2", "max_execution_time": "30",
+                "max_result_rows": "500", "result_overflow_mode": "break",
+                "max_memory_usage": str(4 * 1024 ** 3)}
+    samples, summaries, text = [], [], ""
+    for _ in range(runs):
+        text, elapsed = ch.query(sql, fmt="TabSeparatedWithNames", settings=settings)
+        samples.append(elapsed * 1000.0)
+        summaries.append(dict(ch.LAST_SUMMARY))
+
+    lines = [l for l in text.split(chr(10)) if l != '']
+    columns = lines[0].split(chr(9)) if lines else []
+    rows = [l.split(chr(9)) for l in lines[1:]]
+
+    # parts + marks come from EXPLAIN ESTIMATE, not query_log: this Cloud
+    # service spreads queries across replicas and system.query_log is per-node.
+    parts = marks = est_rows = None
+    try:
+        est, _ = ch.query("EXPLAIN ESTIMATE " + sql, settings={"readonly": "2"})
+        first = [l for l in est.split(chr(10)) if l][0].split(chr(9))
+        if len(first) >= 5:
+            parts, est_rows, marks = int(first[2]), int(first[3]), int(first[4])
+    except Exception:
+        pass
+
+    def pct(vals, p):
+        srt = sorted(vals)
+        return round(srt[min(len(srt) - 1, int(len(srt) * p))], 1)
+
+    last = summaries[-1]
+    def num(k):
+        try:
+            return int(last.get(k, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "columns": columns, "rows": rows[:500], "truncated": len(rows) > 500,
+        "runs": runs,
+        "metrics": {
+            "p50_ms": pct(samples, 0.5), "p95_ms": pct(samples, 0.95),
+            "min_ms": round(min(samples), 1), "max_ms": round(max(samples), 1),
+            "read_rows": num("read_rows"), "read_bytes": num("read_bytes"),
+            "result_rows": len(rows), "result_bytes": num("result_bytes"),
+            "peak_memory_bytes": num("memory_usage"),
+            "selected_parts": parts, "selected_marks": marks,
+            "estimated_rows": est_rows,
+        },
+        "unavailable": ["cpu_time", "network_bytes"],
+        "endpoint": ch.config()["host"],
+    }
+
+
 def overview():
-    open_iv = int(ch.scalar("SELECT countIf(is_open) FROM sony.session_active_intervals FINAL"))
+    jobs = {
+        "server":     "SELECT version()",
+        "events":     "SELECT count() FROM sony.raw_events",
+        "sessions":   "SELECT uniqExact(video_session_id) FROM sony.raw_events",
+        "intervals":  "SELECT count() FROM sony.session_active_intervals FINAL",
+        "open_iv":    "SELECT countIf(is_open) FROM sony.session_active_intervals FINAL",
+        "delta_rows": "SELECT count() FROM sony.concurrency_minute_delta",
+        "checkpoints":"SELECT count() FROM sony.concurrency_hourly_checkpoint",
+        "grid":       "SELECT sum(intDiv(active_end_ms,60000)-intDiv(active_start_ms,60000)+1) "
+                      "FROM sony.session_active_intervals FINAL",
+    }
+    t0 = time.time()
+    res, _rows = parallel_queries(jobs)
+    def i(k):
+        try:
+            return int(res[k].strip())
+        except (ValueError, KeyError):
+            return 0
     return {
         "endpoint": ch.config()["host"],
-        "server": ch.scalar("SELECT version()"),
-        "events": int(ch.scalar("SELECT count() FROM sony.raw_events")),
-        "sessions": int(ch.scalar("SELECT uniqExact(video_session_id) FROM sony.raw_events")),
-        "intervals": int(ch.scalar("SELECT count() FROM sony.session_active_intervals FINAL")),
-        "open_intervals": open_iv,
-        "delta_rows": int(ch.scalar("SELECT count() FROM sony.concurrency_minute_delta")),
-        "checkpoints": int(ch.scalar("SELECT count() FROM sony.concurrency_hourly_checkpoint")),
-        "grid_rows_avoided": int(ch.scalar(
-            "SELECT sum(intDiv(active_end_ms,60000)-intDiv(active_start_ms,60000)+1) "
-            "FROM sony.session_active_intervals FINAL")),
+        "server": res["server"].strip(),
+        "events": i("events"),
+        "sessions": i("sessions"),
+        "intervals": i("intervals"),
+        "open_intervals": i("open_iv"),
+        "delta_rows": i("delta_rows"),
+        "checkpoints": i("checkpoints"),
+        "grid_rows_avoided": i("grid"),
         "bounds": bounds(),
         "filters": filters(),
+        "view_dims": {k: list(v) for k, v in VIEW_DIMS.items()},
+        "dims": list(INTERVAL_DIMS),
+        "latency_ms": round((time.time() - t0) * 1000, 1),
     }
+
+
+def pipeline_live(args):
+    """Live state of the ingestion path: Kafka, Redis, DLQ, schema registry.
+
+    Every external dependency is probed inside its own try/except and degrades
+    to a stated 'unavailable' rather than failing the page. A monitoring view
+    that goes blank when one component is down is the least useful thing to
+    own during an incident -- the whole point is to see WHICH part stopped.
+    """
+    t_start = time.time()
+    out = {"kafka": None, "redis": None, "clickhouse": None, "schemas": [],
+           "dlq": [], "ingest": [], "errors": {}}
+
+    # --- Kafka: end offsets vs committed offsets = consumer lag ------------
+    try:
+        from kafka import KafkaConsumer, TopicPartition
+        broker = os.environ.get("KAFKA_BROKER", "127.0.0.1:9092")
+        c = KafkaConsumer(bootstrap_servers=broker, api_version=(2, 8, 0),
+                          consumer_timeout_ms=3000, request_timeout_ms=4000)
+        topics = {}
+        for t in ("sony.events", "sony.events.dlq"):
+            parts = c.partitions_for_topic(t) or set()
+            tps = [TopicPartition(t, p) for p in parts]
+            if not tps:
+                continue
+            end = c.end_offsets(tps)
+            topics[t] = {"partitions": len(parts), "messages": int(sum(end.values()))}
+        c.close()
+        out["kafka"] = {"broker": broker, "topics": topics}
+    except Exception as e:
+        out["errors"]["kafka"] = str(e)[:160]
+
+    # --- Redis: dedup set size + open-session cache ------------------------
+    try:
+        import redis as _redis
+        r = _redis.Redis(host=os.environ.get("REDIS_HOST", "127.0.0.1"),
+                         port=int(os.environ.get("REDIS_PORT", "6379")),
+                         socket_connect_timeout=3, decode_responses=True)
+        info = r.info("memory")
+        # SCAN, never KEYS: KEYS blocks the server, and a monitoring endpoint
+        # that stalls the thing it monitors is worse than no endpoint.
+        def count(pattern, cap=200000):
+            n, cur = 0, 0
+            while True:
+                cur, batch = r.scan(cur, match=pattern, count=5000)
+                n += len(batch)
+                if cur == 0 or n >= cap:
+                    break
+            return n
+        out["redis"] = {"open_sessions": count("sess:*"),
+                        "dedup_keys": count("ev:*"),
+                        "memory": info.get("used_memory_human"),
+                        "hit_rate": info.get("keyspace_hits")}
+    except Exception as e:
+        out["errors"]["redis"] = str(e)[:160]
+
+    # --- ClickHouse: DLQ, schema registry, ingest rate ---------------------
+    try:
+        text, _ = ch.query("SELECT reason, count() FROM sony.stream_dlq "
+                           "GROUP BY reason ORDER BY 2 DESC LIMIT 12")
+        out["dlq"] = [{"reason": l.split("\t")[0], "count": int(l.split("\t")[1])}
+                      for l in text.splitlines() if l]
+    except Exception as e:
+        out["errors"]["dlq"] = str(e)[:160]
+    try:
+        text, _ = ch.query(
+            "SELECT fingerprint, compatible, length(fields), "
+            "arrayStringConcat(unmapped, ', '), arrayStringConcat(missing, ', ') "
+            "FROM sony.schema_registry GROUP BY fingerprint, compatible, fields, "
+            "unmapped, missing ORDER BY compatible ASC LIMIT 12")
+        for l in text.splitlines():
+            if not l:
+                continue
+            fp, comp, n, unm, mis = l.split("\t")
+            out["schemas"].append({"fingerprint": fp[:12], "compatible": comp == "1",
+                                   "fields": int(n), "unmapped": unm, "missing": mis})
+    except Exception as e:
+        out["errors"]["schemas"] = str(e)[:160]
+    try:
+        text, _ = ch.query(
+            "SELECT toString(minute), sum(events) FROM sony.ingest_rate "
+            "GROUP BY minute ORDER BY minute DESC LIMIT 60")
+        out["ingest"] = [{"minute": l.split("\t")[0], "events": int(l.split("\t")[1])}
+                         for l in text.splitlines() if l][::-1]
+    except Exception as e:
+        out["errors"]["ingest"] = str(e)[:160]
+    try:
+        out["clickhouse"] = {
+            "raw_events": int(ch.scalar("SELECT count() FROM sony.raw_events")),
+            "stream_rows": int(ch.scalar(
+                "SELECT count() FROM sony.raw_events_stream") or 0),
+            "endpoint": ch.config()["host"],
+        }
+    except Exception as e:
+        out["errors"]["clickhouse"] = str(e)[:160]
+
+    out["latency_ms"] = round((time.time() - t_start) * 1000, 1)
+    return out
+
+
+def heatmap(args):
+    """Peak concurrency per (date, hour-of-day).
+
+    The running total must be global and ordered across the WHOLE series --
+    a cumulative sum restarted per hour would report the hour's net change,
+    not the concurrency reached inside it. So the window runs over every
+    minute and the max is taken per bucket afterwards.
+    """
+    lo, hi = bounds()
+    t1 = args.get("to") or hi
+    t0 = args.get("from") or lo
+    w = delta_where(args)
+    t_start = time.time()
+    sql = f"""
+SELECT toString(toDate(minute)) AS d, toHour(minute) AS h, max(c) AS peak
+FROM (
+  SELECT minute, sum(sum(delta)) OVER (ORDER BY minute) AS c
+  FROM sony.concurrency_delta_all
+  WHERE minute <= toDateTime({q_ident(t1)}, 'UTC') {w}
+  GROUP BY minute)
+WHERE minute >= toDateTime({q_ident(t0)}, 'UTC')
+GROUP BY d, h ORDER BY d, h"""
+    text, _ = ch.query(sql)
+    cells = []
+    for line in text.splitlines():
+        if not line:
+            continue
+        d, h, p = line.split("\t")
+        cells.append({"date": d, "hour": int(h), "peak": int(p)})
+    return {"cells": cells, "latency_ms": round((time.time() - t_start) * 1000, 1),
+            "rows_read": int(ch.LAST_SUMMARY.get("read_rows", 0) or 0)}
+
+
+def language(args):
+    """Audio-language mix. Normalised, because the raw column is not clean:
+    'hin' / 'HIN' / 'hin-hindi' are the same language, and blank / unk / non /
+    und all mean 'not stated'. The size of the Unknown bucket is itself the
+    finding -- it is why this cannot stand in for geography.
+    """
+    t_start = time.time()
+    w = where_clause(args, dims=("platform", "country"))
+    # ONE language per session, taken at the session's first event -- the same
+    # argMin attribution the pipeline uses for platform and country. Grouping
+    # the raw rows instead would put a session in several buckets at once and
+    # the buckets would sum to more than the session count.
+    sql = f"""
+SELECT lang, count() AS sessions FROM (
+  SELECT video_session_id,
+    multiIf(
+      lower(substring(first_lang,1,3)) = 'hin', 'Hindi',
+      lower(substring(first_lang,1,3)) = 'eng', 'English',
+      lower(substring(first_lang,1,3)) = 'tam', 'Tamil',
+      lower(substring(first_lang,1,3)) = 'tel', 'Telugu',
+      lower(substring(first_lang,1,3)) = 'mal', 'Malayalam',
+      lower(substring(first_lang,1,3)) = 'mar', 'Marathi',
+      lower(substring(first_lang,1,3)) = 'ben', 'Bengali',
+      lower(substring(first_lang,1,3)) = 'kan', 'Kannada',
+      first_lang = '' OR lower(substring(first_lang,1,3))
+        IN ('unk','non','und'), 'Not stated',
+      'Other') AS lang
+  FROM (
+    -- first STATED language, not simply the first value. Players emit 'unk'
+    -- before the audio track resolves, so plain argMin would report 80% of
+    -- sessions as unknown and understate every real language.
+    SELECT video_session_id,
+           argMinIf(audio_language, event_timestamp_ms,
+                    audio_language != '' AND lower(substring(audio_language,1,3))
+                      NOT IN ('unk','non','und')) AS first_lang
+    FROM sony.raw_events WHERE 1=1 {w}
+    GROUP BY video_session_id))
+GROUP BY lang ORDER BY sessions DESC"""
+    text, _ = ch.query(sql)
+    rows = []
+    for line in text.splitlines():
+        if not line:
+            continue
+        lang, s = line.split("\t")
+        rows.append({"value": lang, "sessions": int(s)})
+    return {"rows": rows, "latency_ms": round((time.time() - t_start) * 1000, 1),
+            "rows_read": int(ch.LAST_SUMMARY.get("read_rows", 0) or 0),
+            "total_sessions": sum(r["sessions"] for r in rows)}
+
+
+def top_content(args):
+    """Highest-concurrency titles. Joins content_dim -- never dictGet (bug #1)."""
+    lo, hi = bounds()
+    t1 = args.get("to") or hi
+    limit = min(int(args.get("limit") or 20), 100)
+    w = delta_where(args)
+    t_start = time.time()
+    sql = f"""
+SELECT c.title AS title, d.video_type AS video_type, d.category AS category,
+       p.peak AS peak
+FROM (
+  SELECT content_id, max(c) AS peak FROM (
+    SELECT content_id, minute,
+           sum(sum(delta)) OVER (PARTITION BY content_id ORDER BY minute) AS c
+    FROM sony.concurrency_delta_all
+    WHERE minute <= toDateTime({q_ident(t1)}, 'UTC') {w}
+    GROUP BY content_id, minute)
+  GROUP BY content_id) AS p
+LEFT JOIN (SELECT content_id, title, video_type, category
+           FROM sony.content_dim FINAL) AS c ON c.content_id = p.content_id
+LEFT JOIN (SELECT content_id, video_type, category
+           FROM sony.content_dim FINAL) AS d ON d.content_id = p.content_id
+ORDER BY peak DESC LIMIT {limit}"""
+    text, _ = ch.query(sql)
+    rows = []
+    for line in text.splitlines():
+        if not line:
+            continue
+        title, vt, cat, peak = line.split("\t")
+        rows.append({"title": title or "(unknown title)", "video_type": vt,
+                     "category": cat, "peak": int(peak)})
+    return {"rows": rows, "latency_ms": round((time.time() - t_start) * 1000, 1),
+            "rows_read": int(ch.LAST_SUMMARY.get("read_rows", 0) or 0)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -228,13 +845,46 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         args = {k: v[0] for k, v in urllib.parse.parse_qs(u.query).items()}
         try:
-            if u.path in ("/", "/index.html"):
-                with open(os.path.join(WEB, "index.html"), encoding="utf-8") as fh:
+            # Vendored assets. Everything the page needs is served from this
+            # repo -- no CDN, so venue wi-fi cannot break the demo.
+            if u.path.startswith("/vendor/") and u.path.endswith(".js"):
+                name = os.path.basename(u.path)
+                fp = os.path.join(WEB, "vendor", name)
+                if os.path.exists(fp):
+                    with open(fp, "rb") as fh:
+                        return self._send(200, fh.read(), "application/javascript")
+                return self._send(404, {"error": "not found"})
+
+            page = {"/": "index.html", "/app": "app.html",
+                    "/classic": "classic.html", "/deck": "deck.html"}.get(u.path)
+            if page is None and u.path.endswith(".html"):
+                # only ever serve from web/, never an arbitrary path
+                cand = os.path.basename(u.path)
+                if os.path.exists(os.path.join(WEB, cand)):
+                    page = cand
+            if page:
+                with open(os.path.join(WEB, page), encoding="utf-8") as fh:
                     return self._send(200, fh.read(), "text/html; charset=utf-8")
             if u.path == "/api/overview":
                 return self._send(200, overview())
             if u.path == "/api/series":
                 return self._send(200, series(args))
+            if u.path == "/api/facets":
+                return self._send(200, facets(args))
+            if u.path == "/api/breakdown":
+                return self._send(200, breakdown(args))
+            if u.path == "/api/top_content":
+                return self._send(200, top_content(args))
+            if u.path == "/api/heatmap":
+                return self._send(200, heatmap(args))
+            if u.path == "/api/language":
+                return self._send(200, language(args))
+            if u.path == "/api/catalog":
+                return self._send(200, {"queries": CATALOG})
+            if u.path == "/api/pipeline_live":
+                return self._send(200, pipeline_live(args))
+            if u.path == "/api/playground":
+                return self._send(200, playground(args))
             self._send(404, {"error": "not found"})
         except Exception as e:
             self._send(500, {"error": str(e)[:800]})

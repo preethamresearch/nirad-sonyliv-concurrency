@@ -15,3 +15,7 @@ out/scratch/
 # Generated test fixtures. Large, and reproducible from the source dataset:
 #   python scripts/make_fixture.py --raw <raw.csv> --out fixtures/open_day.csv --cut-minutes-before-end 30
 fixtures/*.csv
+
+# Scratch produced while restructuring the UI shell.
+web/_shell.html
+web/*.backup.html

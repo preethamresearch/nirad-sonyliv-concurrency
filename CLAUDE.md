@@ -69,7 +69,9 @@ peak foreground-only     3,090      17.4% removed
 ANDROID_PHONE + live       329 vs 448 → 26.6% removed
 intervals               35,902  (oracle parity exact)
 delta rows              31,521  vs 145,821 for a minute grid  (4.6x)
-raw_events on disk        5.39 MiB from a 222 MB CSV  (~41x)
+raw_events on disk        4.79 MiB from a 222 MB CSV  (~46x, 5.55 B/row)
+full sealed run             77 s  (load 40s parallel, derive 3s, serve 4s)
+stream throughput        2,028 events/s  one consumer, 6 partitions
 ```
 
 ---
@@ -120,15 +122,54 @@ special case, deliberately.
 
 **Done:** model, serving layer, checkpoints, hot tier, oracle parity (exact),
 sealed harness, incremental proof, ClickStack tracing, provenance table,
-dashboard, MCP server, README, 492-word summary, pushed to GitHub.
+MCP server, README, 492-word summary, pushed to GitHub.
 
-**Not done:** pitch deck (≤15 slides PDF), demo video (≤5 min), LibreChat +
-Langfuse (optional — Spot Award needs all four products; **needs an LLM API
-key from the user**), sealed-day run.
+**Added 1–2 Aug:**
+- **8 dashboards** at `/app` (Overview, Stream Health, Content, Engagement,
+  Languages, Live Pipeline, Pipeline, Architecture) + landing page at `/`.
+  Old single view preserved at `/classic`. Deck at `/deck` (15 slides, print
+  to PDF).
+- **Streaming pipeline** `scripts/stream_pipeline.py`: Kafka (Redpanda, 6
+  partitions, keyed by session) → validate → Redis dedup → ClickHouse, with a
+  DLQ topic + `sony.stream_dlq`. 2,028 events/s. Replay proven idempotent
+  (32,815 duplicates dropped, zero double-count).
+- **Fault injector** `scripts/inject_faults.py`: 20 fault classes, deterministic
+  seed, writes a manifest so findings can be checked against ground truth.
+- **Resilient loader**: header matched BY NAME via `ALIASES`, String staging,
+  SQL casts, `REQUIRED` contract that aborts rather than defaulting.
+- `sql/05_streaming.sql`: materialized views (`ingest_rate`, `session_spans`),
+  `schema_registry`, content CDC.
+- **Query playground** on the Architecture tab; `scripts/codec_bench.py`.
 
-**Blocked on user:** LLM API key. Possibly a fresh ClickHouse password if
-rotated. A fresh GitHub token or `gh auth login` for future pushes — the one
-used earlier should have been revoked.
+**Bugs found by the dirty-data rehearsal (all fixed) — do not reintroduce:**
+1. `run_sealed.py` had its OWN positional CSV insert, bypassing the hardened
+   loader entirely. Both paths now go through `load.load_resilient`.
+2. `oracle.py` hardcoded the header `event_timestamp` and crashed with
+   KeyError on a renamed column. Now resolves via `load.ALIASES`.
+3. Loader zeroed unparseable timestamps while the oracle skipped them, so
+   parity compared two different populations. Both now REJECT.
+4. `system.parts_columns.column_data_compressed_bytes` is **0 on Cloud**
+   (SharedMergeTree). Use `system.parts.bytes_on_disk`.
+5. Aliasing a column to its own name inside an aggregate
+   (`argMinState(platform,…) AS platform`) is rejected as a nested aggregate.
+   Qualify the source table.
+6. A CDC materialized view cannot look up the "previous" row — it fires AFTER
+   the insert, so previous == current. Append versions; diff with a window
+   function at read time.
+7. **Codec**: DoubleDelta is WRONG for `event_timestamp_ms` here. The sort key
+   orders by session, not time, so timestamps jump at session boundaries.
+   Delta is 17.1% smaller. Measured, see `scripts/codec_bench.py`.
+
+**Running locally (WSL Docker, 3.7 GiB VM — near its ceiling):**
+`clickstack` 8080 · `redpanda` 9092 · `redis` 6379 · `langfuse` 3000 ·
+`librechat` 3080 (Gemini 2.5 Flash) · dashboard 877.
+
+**Not done:** demo video (≤5 min). Deck needs Ctrl+P → PDF from `/deck`.
+MCP server is stdio-only so it is NOT wired into LibreChat (needs an
+HTTP/SSE transport to cross the container boundary).
+
+**Credentials in the transcript — rotate after the event:** ClickHouse
+password and the Gemini key both appear in chat history.
 
 ---
 

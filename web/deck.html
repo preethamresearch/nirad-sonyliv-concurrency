@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team Nirad · SonyLIV · Click-a-thon 2026</title>
+<style>
+/* 15 slides, 16:9. Screen: scroll or arrow-key through. Print: one slide per
+   page, which is how the PDF is produced -- Ctrl+P, landscape, no margins. */
+:root{
+  --plane:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e;
+  --muted:#898781; --hair:rgba(11,11,11,.10); --grid:#e1e0d9;
+  --s1:#2a78d6; --s2:#eb6834; --good:#0ca30c; --crit:#d03b3b;
+  --brand:#faff69; --brand-ink:#161616;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#e8e8e4;color:var(--ink);
+  font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+.slide{
+  position:relative; width:1280px; height:720px; margin:22px auto;
+  background:var(--surface); border:1px solid var(--hair); border-radius:10px;
+  padding:52px 60px 56px; overflow:hidden; box-shadow:0 3px 18px rgba(0,0,0,.09);
+}
+.n{position:absolute;right:26px;bottom:18px;color:var(--muted);font-size:12px}
+.kicker{color:var(--muted);font-size:13px;letter-spacing:.09em;
+  text-transform:uppercase;margin-bottom:12px}
+h1{font-size:56px;line-height:1.06;letter-spacing:-.03em;margin:0 0 18px}
+h2{font-size:34px;line-height:1.14;letter-spacing:-.02em;margin:0 0 8px}
+.sub{color:var(--ink2);font-size:19px;max-width:74ch;margin:0 0 24px}
+p{max-width:80ch}
+.big{font-size:19px;line-height:1.6;color:var(--ink2);max-width:78ch}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:34px}
+.cols3{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.fig{background:var(--plane);border:1px solid var(--hair);border-radius:9px;padding:16px 18px}
+.fig .l{font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.fig .v{font-size:38px;font-weight:700;letter-spacing:-.025em;margin-top:3px;
+  font-variant-numeric:tabular-nums}
+.fig .n2{font-size:13px;color:var(--muted);margin-top:2px}
+.v.s1{color:var(--s1)} .v.s2{color:var(--s2)} .v.good{color:var(--good)}
+.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+  background:var(--plane);border:1px solid var(--hair);border-radius:8px;
+  padding:13px 15px;font-size:15px;display:inline-block}
+table{width:100%;border-collapse:collapse;font-size:16px;
+  font-variant-numeric:tabular-nums;margin-top:6px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--grid);
+  vertical-align:top}
+th{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);
+  font-weight:600}
+td.num{text-align:right;white-space:nowrap;font-weight:600}
+ul{margin:6px 0;padding-left:22px} li{margin:7px 0;color:var(--ink2)}
+li b,li strong{color:var(--ink)}
+.tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;
+  border:1px solid var(--hair);color:var(--ink2);background:var(--plane)}
+.tag.built{border-color:var(--s1);color:var(--s1)}
+.tag.designed{border-color:var(--muted);color:var(--muted)}
+.title-slide{background:var(--brand-ink);color:#fff;border-color:var(--brand-ink)}
+.title-slide h1{color:#fff;max-width:22ch}
+.title-slide .sub{color:#d9d9d2}
+.title-slide .rule{width:64px;height:5px;background:var(--brand);border-radius:3px;
+  margin:0 0 26px}
+.title-slide .meta{position:absolute;left:60px;bottom:52px;color:#a9a9a1;font-size:15px}
+.note{color:var(--muted);font-size:14px;margin-top:16px}
+.bar{height:26px;border-radius:5px;background:var(--s2);position:relative}
+.bar.b2{background:var(--s1)}
+.barwrap{margin:5px 0 16px}
+.barlab{display:flex;justify-content:space-between;font-size:14px;color:var(--ink2);
+  margin-bottom:3px}
+@media print{
+  body{background:#fff}
+  .slide{margin:0;border:0;border-radius:0;box-shadow:none;
+    page-break-after:always;break-after:page;width:1280px;height:720px}
+}
+</style>
+</head>
+<body>
+
+<!-- 1 ------------------------------------------------------------------ -->
+<section class="slide title-slide">
+  <div class="rule"></div>
+  <div class="kicker" style="color:#a9a9a1">Click-a-thon 2026 · SonyLIV track</div>
+  <h1>An open app is not a viewer.</h1>
+  <p class="sub">Foreground-only concurrency at streaming scale, computed on ClickHouse.</p>
+  <div class="meta">Team Nirad · github.com/preethamresearch/nirad-sonyliv-concurrency</div>
+  <div class="n" style="color:#6f6f68">1 / 15</div>
+</section>
+
+<!-- 2 ------------------------------------------------------------------ -->
+<section class="slide">
+  <div class="kicker">The problem</div>
+  <h2>Concurrency is a business number, not a vanity metric.</h2>
+  <p class="big" style="margin-top:14px">
+    Peak concurrent viewers sets ad inventory, provisions CDN capacity, and justifies
+    the price of the next rights package. It has to be defensible.</p>
+  <p class="big">
+    The obvious way to compute it — count a session from its first event to its last —
+    also counts the paused player, the backgrounded app, and the client that silently
+    went away. Nobody is watching, and the number says they are.</p>
+  <div class="mono" style="margin-top:22px">
+    naive concurrency = interval overlap from session start → session end
+  </div>
+  <p class="note">Every figure in this deck is measured on the provided dataset:
+    905,558 events, 10,866 sessions, computed on ClickHouse Cloud.</p>
+  <div class="n">2 / 15</div>
+</section>
+
+<!-- 3 ------------------------------------------------------------------ -->
+<section class="slide">
+  <div class="kicker">The result</div>
+  <h2>653 viewers at peak who were not watching.</h2>
+  <div class="cols3" style="margin-top:26px">
+    <div class="fig"><div class="l">Peak — naive</div><div class="v s2">3,743</div>
+      <div class="n2">session start → end</div></div>
+    <div class="fig"><div class="l">Peak — foreground only</div><div class="v s1">3,090</div>
+      <div class="n2">active = intent ∧ alive</div></div>
+    <div class="fig"><div class="l">Over-reported</div><div class="v">17.4%</div>
+      <div class="n2">653 sessions at peak</div></div>
+  </div>
+  <div style="margin-top:30px">
+    <div class="barwrap">
+      <div class="barlab"><span>naive session overlap</span><b>3,743</b></div>
+      <div class="bar" style="width:100%"></div>
+    </div>
+    <div class="barwrap">
+      <div class="barlab"><span>foreground-only (defensible)</span><b>3,090</b></div>
+      <div class="bar b2" style="width:82.6%"></div>
+    </div>
+  </div>
+  <p class="big" style="margin-top:6px">On a single platform slice the gap is wider still:
+    <b>ANDROID_PHONE on live content — 448 naive against 329 actual, 26.6% removed.</b></p>
+  <div class="n">3 / 15</div>
+</section>
+
+<!-- 4 ------------------------------------------------------------------ -->
+<section class="slide">
+  <div class="kicker">The model</div>
+  <h2>Two conditions, and both are required.</h2>
+  <div class="mono" style="margin:16px 0 26px;font-size:19px">
+    active = intent_playing <b>AND</b> client_alive
+  </div>
+  <div class="cols">
+    <div>
+      <h3 style="margin:0 0 6px;font-size:19px">intent_playing</h3>
+      <p style="color:var(--ink2)">Toggled only by explicit transitions. VideoPlay,
+        AppForegrounded and <code>resume</code> open it; pause, AppBackgrounded and
+        VideoSessionEnd close it.</p>
+    </div>
+    <div>
+      <h3 style="margin:0 0 6px;font-size:19px">client_alive</h3>
+      <p style="color:var(--ink2)">False during total event silence beyond 120 s —
+        three times the measured 40 s heartbeat cadence.</p>
+    </div>
+  </div>
+  <p class="big" style="margin-top:22px"><b>We tested collapsing this into one state
+    machine. Both variants are wrong:</b></p>
+  <ul>
+    <li>Close on a heartbeat gap → needs an explicit resume to reopen, so it
+      <b>undercounts a network drop mid-playback</b>.</li>
+    <li>Open on heartbeats → <b>overcounts every foreground pause</b>, and 82% of
+      foreground pauses keep emitting heartbeats.</li>
+  </ul>
+  <div class="n">4 / 15</div>
+</section>
+
+<!-- 5 ------------------------------------------------------------------ -->
+<section class="slide">
+  <div class="kicker">Evidence</div>
+  <h2>Measured from the data, not taken from the docs.</h2>
+  <table>
+    <thead><tr><th>Fact</th><th style="text-align:right">Value</th><th>Why it matters</th></tr></thead>
+    <tbody>
+      <tr><td>Heartbeat cadence (p90)</td><td class="num">40.0 s</td>
+        <td>The data dictionary says 60 s. <b>It is wrong.</b> The gap threshold derives from this.</td></tr>
+      <tr><td>Identical across all 10 platforms</td><td class="num">40.0 s</td>
+        <td>Device and app version do not change cadence — one threshold is justified.</td></tr>
+      <tr><td>Foreground pauses still emitting</td><td class="num">82%</td>
+        <td>Why liveness alone cannot mean "watching".</td></tr>
+      <tr><td>Sessions where pause ≠ resume</td><td class="num">65%</td>
+        <td>Transitions must be collapsed, never paired.</td></tr>
+      <tr><td>Gaps beyond 120 s</td><td class="num">0.894%</td>
+        <td>Rare enough to be signal rather than noise.</td></tr>
+      <tr><td>Sessions with unstable dimensions</td><td class="num">120</td>
+        <td>Attribute by <code>argMin</code> on event time, or a session double-counts.</td></tr>
+      <tr><td>pause / resume are not event types</td><td class="num">—</td>
+        <td>They hide inside <code>event_type='VideoHeartbeat'</code>. Missing this is the
+          most common way to overcount.</td></tr>
+    </tbody>
+  </table>
+  <div class="n">5 / 15</div>
+</section>
+
+<!-- 6 ------------------------------------------------------------------ -->
+<section class="slide">
+  <div class="kicker">Architecture</div>
+  <h2>Ingest, reconcile, serve.</h2>
+  <div class="mono" style="width:100%;font-size:14px;line-height:1.75;margin-top:10px">
+    clients → <b>Kafka</b> (6 partitions, keyed by session) → <b>validator</b> → <b>dedup (Redis)</b> → <b>ClickHouse</b><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓ rejected<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>DLQ</b> (topic + table, reason attached)<br><br>
+    raw_events → <b>materialized views</b> → active_intervals → <b>minute deltas</b> → <b>hourly checkpoints</b> → API
+  </div>
+  <div class="cols3" style="margin-top:24px">
+    <div class="fig"><div class="l">Running</div>
+      <div style="margin-top:8px;line-height:2">
+        <span class="tag built">Kafka / Redpanda</span> <span class="tag built">Redis</span>
+        <span class="tag built">DLQ</span> <span class="tag built">ClickHouse</span>
+        <span class="tag built">Materialized views</span> <span class="tag built">ClickStack</span>
+        <span class="tag built">Langfuse</span> <span class="tag built">LibreChat</span></div></div>
+    <div class="fig"><div class="l">Designed, labelled as such</div>
+      <div style="margin-top:8px;line-height:2">
+        <span class="tag designed">Schema registry upstream</span>
+        <span class="tag designed">Autoscaling consumers</span></div>
+      <div class="n2" style="margin-top:10px">The dashboard marks these dashed. A diagram
+        that implies more than it runs survives one question.</div></div>
+    <div class="fig"><div class="l">Throughput measured</div><div class="v s1">2,028</div>
+      <div class="n2">events/s, one consumer, 6 partitions available</div></div>
+  </div>
+  <div class="n">6 / 15</div>
+</section>
+
+<!-- 7 ------------------------------------------------------------------ -->
+<section class="slide">
+  <div class="kicker">Reliability</div>
+  <h2>At-least-once delivery plus an idempotent sink.</h2>
+  <p class="big">Offsets commit only after the batch is durably in ClickHouse. A crash
+    replays; the Redis dedup set turns the replay into a no-op. That is what
+    "exactly-once" means in practice.</p>
+  <div class="cols3" style="margin-top:22px">
+    <div class="fig"><div class="l">Replay test</div><div class="v good">32,815</div>
+      <div class="n2">duplicates dropped on full replay — zero double-counting</div></div>
+    <div class="fig"><div class="l">Dedup key</div><div class="v" style="font-size:26px">fingerprint</div>
+      <div class="n2">session + ts + type + event — deliberately not the Kafka offset,
+        which changes on retry</div></div>
+    <div class="fig"><div class="l">DLQ</div><div class="v">1,703</div>
+      <div class="n2">malformed events isolated with reason and payload; pipeline never stopped</div></div>
+  </div>
+  <p class="big" style="margin-top:22px">Events are keyed by <code>video_session_id</code>, so
+    every event for a session lands on the same partition. Session reconstruction is
+    order-dependent per key — a round-robin partitioner would make ordering unrecoverable.</p>
+  <div class="n">7 / 15</div>
+</section>
+
+<!-- 8 ------------------------------------------------------------------ -->
+<section class="slide">
+  <div class="kicker">Dirty data</div>
+  <h2>The judged dataset is bigger and dirtier. We tested for that.</h2>
+  <p class="big">A pipeline that has only ever seen clean input has not been tested. So we
+    built a deterministic fault injector — 20 fault classes across schema, event, timestamp,
+    dimension and structural categories — and ran the loader against its output.</p>
+  <div class="cols" style="margin-top:20px">
+    <div class="fig">
+      <div class="l" style="color:var(--crit)">What the original loader did</div>
+      <p style="margin:8px 0 0;color:var(--ink2)">Bound columns <b>positionally</b>. Against a
+        file with an extra or reordered column it does not fail — it shifts every value one
+        column left and loads platform into country. <b>Wrong answers that look right.</b></p>
+    </div>
+    <div class="fig">
+      <div class="l" style="color:var(--good)">What it does now</div>
+      <p style="margin:8px 0 0;color:var(--ink2)">Matches columns <b>by name</b> through an
+        alias table, stages everything as String, casts in SQL where a failure is a countable
+        zero, and <b>aborts loudly</b> if a required column cannot be resolved.</p>
+    </div>
+  </div>
+  <p class="big" style="margin-top:20px"><b>Result on a file with shuffled, renamed, widened
+    and missing columns:</b> 12 of 14 columns matched, 2 unrecognised ignored, 1 missing
+    defaulted, 915 unparseable timestamps reported rather than silently zeroed.</p>
+  <div class="n">8 / 15</div>
+</section>
+
+<!-- 9 ------------------------------------------------------------------ -->
+<section class="slide">
+  <div class="kicker">Storage</div>
+  <h2>Two rows per interval, whatever its duration.</h2>
+  <div class="cols3" style="margin-top:22px">
+    <div class="fig"><div class="l">Delta rows</div><div class="v s1">31,521</div>
+      <div class="n2">the model we ship</div></div>
+    <div class="fig"><div class="l">Minute-grid rows</div><div class="v s2">145,821</div>
+      <div class="n2">one row per active minute — 4.6× more</div></div>
+    <div class="fig"><div class="l">On disk</div><div class="v">4.79 MiB</div>
+      <div class="n2">from a 222 MB CSV — ~46×, 5.55 bytes/row</div></div>
+  </div>
+  <p class="big" style="margin-top:22px">A minute grid grows with total <b>watch time</b>.
+    A delta model stores exactly two rows per interval regardless of duration, so it grows
+    with the number of <b>intervals</b>. The gap widens as sessions lengthen — precisely
+    what happens during the live events this metric exists to measure.</p>
+  <div class="fig" style="margin-top:16px;border-left:3px solid var(--s1)">
+    <div class="l">Codecs are measured, not assumed</div>
+    <p style="margin:8px 0 0;color:var(--ink2)">DoubleDelta looks obviously right for 40 s
+      heartbeats. It is <b>wrong here</b>: the sort key is
+      <code>(video_session_id, event_timestamp_ms)</code>, so rows are ordered by session,
+      not by time — timestamps jump at every session boundary and DoubleDelta's second
+      difference amplifies the jump. Plain <b>Delta is 17.1% smaller</b>, at zero read cost.
+      Three of our four codec hypotheses were wrong; the benchmark caught them.
+      <b>ZSTD(6) everywhere bought 0.4% for ~20% more insert CPU</b> — the aggressive-
+      compression trap. Gorilla the server refuses outright: it is a float codec.</p>
+  </div>
+  <div class="n">9 / 15</div>
+</section>
+
+<!-- 10 ----------------------------------------------------------------- -->
+<section class="slide">
+  <div class="kicker">Correctness</div>
+  <h2>Parity against an independent oracle — and a near-miss worth showing.</h2>
+  <p class="big">Intervals are verified against a separately written Python implementation.
+    <b>35,902 intervals, exact parity.</b> The gate must pass before anything ships.</p>
+  <div class="fig" style="margin-top:20px;border-left:3px solid var(--crit)">
+    <div class="l" style="color:var(--crit)">The trap we fell into, and caught</div>
+    <p style="margin:8px 0 0;color:var(--ink2)">Writing the obvious interval-overlap query
+      gives <b>2,353</b> instead of <b>3,090</b> — wrong by 24%, in the flattering direction.
+      Cause: an interval that opens and closes inside the same minute contributes +1 and −1
+      to that minute and cancels itself. The fix is minute containment — close at the minute
+      <i>after</i> the end minute — which is why the shipped pipeline is right and the
+      one-line version is not.</p>
+  </div>
+  <p class="big" style="margin-top:18px">Peaks are <b>not additive</b>: platform peaks sum to
+    3,215 against a true peak of 3,090, because each platform peaks at a different minute.
+    The dashboard states this rather than letting a reader add the column up.</p>
+  <div class="n">10 / 15</div>
+</section>
+
+<!-- 11 ----------------------------------------------------------------- -->
+<section class="slide">
+  <div class="kicker">Serving</div>
+  <h2>Every number on screen is a live query.</h2>
+  <div class="cols3" style="margin-top:20px">
+    <div class="fig"><div class="l">Full-range chart</div><div class="v">823 ms</div>
+      <div class="n2">1.98M rows read</div></div>
+    <div class="fig"><div class="l">Peak-day slice</div><div class="v s1">541 ms</div>
+      <div class="n2">re-queried on filter change</div></div>
+    <div class="fig"><div class="l">Per-dimension breakdown</div><div class="v">264 ms</div>
+      <div class="n2">cumulative sum partitioned by platform</div></div>
+  </div>
+  <p class="big" style="margin-top:24px">Nothing is precomputed, cached, or baked into the
+    page. The latency and rows-read figures in the header are the real ones for the query
+    that drew the current chart.</p>
+  <p class="big">The <b>Architecture tab ships a query playground</b>: nine of the project's
+    real queries in a picker, or write your own. Read-only enforced. It reports p50/p95 over
+    repeated runs, rows and bytes read, result rows, peak memory, and selected parts and
+    marks — so the storage argument on slide 9 can be checked live, not taken on trust.</p>
+  <div class="n">11 / 15</div>
+</section>
+
+<!-- 12 ----------------------------------------------------------------- -->
+<section class="slide">
+  <div class="kicker">Observability</div>
+  <h2>Four ClickHouse products, each doing a real job.</h2>
+  <table>
+    <thead><tr><th>Product</th><th>What it actually does here</th></tr></thead>
+    <tbody>
+      <tr><td><b>ClickHouse Cloud</b></td>
+        <td>Landing and serving. Every dashboard figure, every playground query.</td></tr>
+      <tr><td><b>ClickStack</b></td>
+        <td>OpenTelemetry span on every statement, carrying duration, rows read and bytes
+          read. The observability layer is guarded so it can never fail the query it observes.</td></tr>
+      <tr><td><b>LibreChat</b></td>
+        <td>Natural-language access, on Gemini 2.5 Flash.</td></tr>
+      <tr><td><b>Langfuse</b></td>
+        <td>Trace and cost visibility for those model calls.</td></tr>
+    </tbody>
+  </table>
+  <p class="big" style="margin-top:20px">Every pipeline run writes provenance to
+    <code>sony.pipeline_runs</code> — run id, inputs, row counts, timings. <b>No pipeline
+    evidence, no credit</b>, so the evidence is a table you can query rather than a claim
+    in a README.</p>
+  <div class="n">12 / 15</div>
+</section>
+
+<!-- 13 ----------------------------------------------------------------- -->
+<section class="slide">
+  <div class="kicker">The product</div>
+  <h2>Seven dashboards, one filter bar, progressive narrowing.</h2>
+  <div class="cols" style="margin-top:16px">
+    <div>
+      <ul style="margin-top:0">
+        <li><b>Overview</b> — the gap, over time and by platform</li>
+        <li><b>Stream Health</b> — what stopped sessions counting</li>
+        <li><b>Content</b> — peak simultaneous viewers per title</li>
+        <li><b>Engagement</b> — where watch time goes</li>
+      </ul>
+    </div>
+    <div>
+      <ul style="margin-top:0">
+        <li><b>Languages</b> — audio mix and its limits</li>
+        <li><b>Pipeline</b> — storage and query cost</li>
+        <li><b>Architecture</b> — diagram and live playground</li>
+      </ul>
+    </div>
+  </div>
+  <p class="big" style="margin-top:14px">Click any bar, table row or heatmap cell and the
+    whole page re-scopes to it. Filters accumulate as removable chips, and facet counts
+    narrow as you go — so a reader never selects a value that returns nothing.</p>
+  <p class="big">Vanilla SVG. No CDN, no npm, no chart library. <b>Venue wi-fi cannot break
+    the demo.</b></p>
+  <div class="n">13 / 15</div>
+</section>
+
+<!-- 14 ----------------------------------------------------------------- -->
+<section class="slide">
+  <div class="kicker">Honesty</div>
+  <h2>What we found that we would rather not have.</h2>
+  <ul style="font-size:17px">
+    <li><b>Multi-device concurrency is understated.</b> Of 95 sessions appearing on more
+      than one platform, <b>82 genuinely overlap in time</b> — the same viewer watching on
+      phone and TV at once. <code>argMin</code> attributes the session to its first platform
+      and emits one interval, so we count one stream where there are two. 0.75% of sessions;
+      stated rather than buried.</li>
+    <li><b>Checkpoints barely pay here.</b> ~1.01× fewer rows read on this dataset, because
+      94% of events fall in a single day. The design wins at retention this dataset does not
+      have. We report the measurement, not the theory.</li>
+    <li><b>The incremental path is slower than a full rebuild</b> on this data, for the same
+      reason.</li>
+    <li><b>There is no geography.</b> Every event is <code>country = india</code>, with no
+      state, city, region or CDN field. The Languages tab uses audio language as a proxy and
+      says so on the card — 20.6% English sessions cannot be placed at all.</li>
+  </ul>
+  <p class="note" style="font-size:15px">Three counting bugs were found and fixed during
+    development, all the same species: summing values that do not sum — distinct sessions
+    across groups, and peaks across dimensions.</p>
+  <div class="n">14 / 15</div>
+</section>
+
+<!-- 15 ----------------------------------------------------------------- -->
+<section class="slide title-slide">
+  <div class="rule"></div>
+  <h1 style="font-size:44px">Deterministic code computes.<br>The model explains.</h1>
+  <p class="sub" style="max-width:70ch">The MCP server exposes typed tools, not a SQL prompt.
+    An LLM handed raw SQL over these tables writes the naive query and produces a confident,
+    plausible, wrong number — the exact error this submission exists to eliminate. It chooses
+    which question to ask; it never decides how concurrency is computed.</p>
+  <div style="display:flex;gap:16px;margin-top:34px">
+    <div class="fig" style="background:#242422;border-color:#3a3a37">
+      <div class="l" style="color:#8f8f88">Naive</div>
+      <div class="v" style="color:#eb6834">3,743</div></div>
+    <div class="fig" style="background:#242422;border-color:#3a3a37">
+      <div class="l" style="color:#8f8f88">Defensible</div>
+      <div class="v" style="color:#5b9bea">3,090</div></div>
+    <div class="fig" style="background:#242422;border-color:#3a3a37">
+      <div class="l" style="color:#8f8f88">Oracle parity</div>
+      <div class="v" style="color:#3fbf3f">exact</div></div>
+  </div>
+  <div class="meta">Team Nirad · Click-a-thon 2026 · SonyLIV track ·
+    github.com/preethamresearch/nirad-sonyliv-concurrency</div>
+  <div class="n" style="color:#6f6f68">15 / 15</div>
+</section>
+
+<script>
+// Arrow-key navigation for presenting from the browser.
+const slides = [...document.querySelectorAll('.slide')];
+let i = 0;
+addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { i = Math.min(i+1, slides.length-1); }
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { i = Math.max(i-1, 0); }
+  else return;
+  e.preventDefault();
+  slides[i].scrollIntoView({behavior:'smooth', block:'center'});
+});
+</script>
+</body>
+</html>

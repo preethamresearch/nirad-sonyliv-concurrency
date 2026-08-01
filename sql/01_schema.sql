@@ -26,7 +26,13 @@ CREATE DATABASE IF NOT EXISTS sony;
 --   session locality is what the whole pipeline depends on.
 --
 -- Timestamps arrive as epoch milliseconds (Int64). We keep the raw integer
--- (DoubleDelta+ZSTD compresses monotonic-per-session values extremely well)
+-- Codec choice is MEASURED, not assumed (scripts/codec_bench.py).
+-- DoubleDelta looks like the obvious choice for 40s-cadence heartbeats, and
+-- it is wrong here: the sort key is (video_session_id, event_timestamp_ms),
+-- so rows are ordered by SESSION, not by time. Timestamps jump at every
+-- session boundary inside a granule, and DoubleDelta's second difference
+-- amplifies those jumps. Plain Delta is 17.1% smaller across the table.
+-- Gorilla is rejected outright by the server: it is a float codec.
 -- and expose typed values as MATERIALIZED columns, which cost no storage
 -- beyond their own compressed footprint and are computed at insert.
 -- ---------------------------------------------------------------------
@@ -42,14 +48,14 @@ CREATE TABLE IF NOT EXISTS sony.raw_events
     user_id              String              CODEC(ZSTD(3)),
     event_type           LowCardinality(String),
     event                LowCardinality(String),
-    event_timestamp_ms   Int64               CODEC(DoubleDelta, ZSTD(1)),
+    event_timestamp_ms   Int64               CODEC(Delta, ZSTD(1)),
     platform             LowCardinality(String),
     app_version          LowCardinality(String),
     country              LowCardinality(String),
     audio_language       LowCardinality(String),
     subtitle_language    LowCardinality(String),
     player_version       LowCardinality(String),
-    session_start_ms     Int64               CODEC(DoubleDelta, ZSTD(1)),
+    session_start_ms     Int64               CODEC(Delta, ZSTD(1)),
 
     -- The timezone is PINNED, not inherited. A bare DateTime64(3) renders in
     -- the server timezone: Asia/Calcutta on this laptop, UTC on ClickHouse

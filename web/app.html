@@ -1,0 +1,1465 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Concurrency Analytics · SonyLIV · Team Nirad</title>
+<style>
+/* ===========================================================================
+   Design tokens. One scale for type, one for space, one for elevation.
+   Everything below references these -- no ad-hoc pixel values in components,
+   which is the difference between a system and a pile of CSS.
+   Data series use the validated categorical slots; ClickHouse yellow is
+   chrome only, so a brand accent never carries a data value.
+   =========================================================================== */
+:root {
+  color-scheme: light;
+  /* surfaces */
+  --bg:        #f4f4f1;
+  --surface:   #ffffff;
+  --surface-2: #fafaf8;
+  --sidebar:   #17181a;
+  --sidebar-2: #202226;
+  /* ink */
+  --ink-1: #16181d; --ink-2: #4a4f57; --ink-3: #7c828c; --ink-inv: #f7f7f5;
+  /* lines */
+  --line:   #e3e3de;
+  --line-2: #ededea;
+  --focus:  #2a78d6;
+  /* data */
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
+  --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+  --brand: #faff69; --brand-ink: #161616;
+  /* type scale */
+  --t-micro: 10.5px; --t-cap: 11.5px; --t-sm: 12.5px; --t-base: 13.5px;
+  --t-lg: 15px; --t-xl: 19px; --t-num: 27px; --t-hero: 34px;
+  /* space scale */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  --r-sm: 5px; --r: 7px; --r-lg: 10px;
+  --shadow: 0 1px 2px rgba(20,22,26,.05), 0 1px 1px rgba(20,22,26,.04);
+  --shadow-pop: 0 8px 28px rgba(20,22,26,.14);
+  --nav-w: 216px; --topbar-h: 52px; --toolbar-h: 48px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #0e0f11; --surface: #17181a; --surface-2: #1c1e21;
+    --sidebar: #0a0b0c; --sidebar-2: #17181a;
+    --ink-1: #f2f2f0; --ink-2: #b3b8c0; --ink-3: #7c828c; --ink-inv: #16181d;
+    --line: #272a2e; --line-2: #202225;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+    --shadow: 0 1px 2px rgba(0,0,0,.4); --shadow-pop: 0 10px 34px rgba(0,0,0,.55);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e0f11; --surface: #17181a; --surface-2: #1c1e21;
+  --sidebar: #0a0b0c; --sidebar-2: #17181a;
+  --ink-1: #f2f2f0; --ink-2: #b3b8c0; --ink-3: #7c828c; --ink-inv: #16181d;
+  --line: #272a2e; --line-2: #202225;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+  --shadow: 0 1px 2px rgba(0,0,0,.4); --shadow-pop: 0 10px 34px rgba(0,0,0,.55);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink-1);
+  font: var(--t-base)/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .92em; }
+
+/* --- app frame ----------------------------------------------------------- */
+.app { display: grid; grid-template-columns: var(--nav-w) 1fr; min-height: 100vh; }
+
+/* --- sidebar ------------------------------------------------------------- */
+.side {
+  background: var(--sidebar); color: var(--ink-inv);
+  display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+}
+.side .brand {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 0 var(--sp-4); height: var(--topbar-h); flex: none;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+.side .brand .mark {
+  width: 15px; height: 15px; border-radius: 3px; background: var(--brand);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); flex: none;
+}
+.side .brand b { font-size: var(--t-base); letter-spacing: -.01em; }
+.side .grp {
+  font-size: var(--t-micro); letter-spacing: .1em; text-transform: uppercase;
+  color: #6b7078; padding: var(--sp-5) var(--sp-4) var(--sp-2);
+}
+.side nav { display: flex; flex-direction: column; gap: 1px; padding: 0 var(--sp-2); }
+.side nav button {
+  display: flex; align-items: center; gap: var(--sp-3); width: 100%;
+  background: none; border: 0; cursor: pointer; text-align: left;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  color: #a9aeb6; font-size: var(--t-base); line-height: 1.35;
+}
+.side nav button:hover { background: var(--sidebar-2); color: #e6e8ea; }
+.side nav button[aria-current="page"] {
+  background: var(--sidebar-2); color: #fff; font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--brand);
+}
+.side nav .step-unused {
+  width: 20px; height: 20px; flex: none; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10.5px; font-weight: 650; font-variant-numeric: tabular-nums;
+  background: rgba(255,255,255,.07); color: #8a9099;
+}
+.side nav button[aria-current="page"] .step { background: var(--brand); color: #16181d; }
+.side nav .ico { width: 16px; flex: none; opacity: .85; }
+
+/* story navigation ------------------------------------------------------- */
+.storynav { display: flex; justify-content: space-between; align-items: stretch;
+  gap: var(--sp-3); margin-top: var(--sp-2); }
+.sn {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-4); cursor: pointer; text-align: left;
+  box-shadow: var(--shadow); color: var(--ink-2); font-size: var(--t-sm);
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.sn:hover { border-color: var(--ink-3); color: var(--ink-1); }
+.sn.next { align-items: flex-end; text-align: right; }
+.sn.next { font-weight: 600; color: var(--ink-1); }
+.sn .lbl { color: var(--ink-3); font-weight: 400; font-size: var(--t-cap);
+  text-transform: uppercase; letter-spacing: .06em; margin-right: 4px; }
+.sn .q { color: var(--ink-3); font-size: var(--t-cap); }
+.side .foot {
+  margin-top: auto; padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid rgba(255,255,255,.07);
+  font-size: var(--t-micro); color: #6b7078; line-height: 1.6;
+}
+.side .foot .dot { width: 6px; height: 6px; border-radius: 50%;
+  background: var(--good); display: inline-block; margin-right: 6px; }
+
+/* --- topbar -------------------------------------------------------------- */
+.main-col { min-width: 0; display: flex; flex-direction: column; }
+.topbar {
+  height: var(--topbar-h); flex: none; background: var(--surface);
+  border-bottom: 1px solid var(--line); display: flex; align-items: center;
+  gap: var(--sp-4); padding: 0 var(--sp-5); position: sticky; top: 0; z-index: 30;
+}
+.crumb { display: flex; align-items: baseline; gap: var(--sp-2); min-width: 0; }
+.crumb h1 { margin: 0; font-size: var(--t-lg); font-weight: 650; letter-spacing: -.015em; }
+.crumb .desc { font-size: var(--t-sm); color: var(--ink-3); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.grow { flex: 1 1 auto; }
+.stat-inline { display: flex; align-items: center; gap: var(--sp-4);
+  font-size: var(--t-sm); color: var(--ink-3); white-space: nowrap; }
+.stat-inline b { color: var(--ink-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.icon-btn {
+  background: none; border: 1px solid transparent; border-radius: var(--r-sm);
+  padding: 5px 8px; cursor: pointer; color: var(--ink-3); font-size: var(--t-sm);
+}
+.icon-btn:hover { background: var(--surface-2); border-color: var(--line); color: var(--ink-1); }
+
+/* --- toolbar (filters) --------------------------------------------------- */
+.toolbar {
+  min-height: var(--toolbar-h); background: var(--surface-2);
+  border-bottom: 1px solid var(--line); display: flex; align-items: center;
+  gap: var(--sp-2); padding: var(--sp-2) var(--sp-5); flex-wrap: wrap;
+  position: sticky; top: var(--topbar-h); z-index: 25;
+}
+.ctl { position: relative; }
+.ctl > button {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 5px 9px; cursor: pointer;
+  font-size: var(--t-sm); color: var(--ink-1); white-space: nowrap;
+}
+.ctl > button:hover { border-color: var(--ink-3); }
+.ctl > button .cap { color: var(--ink-3); }
+.ctl > button .caret { color: var(--ink-3); font-size: 9px; }
+.ctl > button.on { border-color: var(--focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 15%, transparent); }
+.menu {
+  position: absolute; z-index: 60; top: calc(100% + 5px); left: 0;
+  min-width: 250px; max-height: 340px; overflow: auto;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--shadow-pop); padding: var(--sp-1);
+}
+.menu[hidden] { display: none; }
+.menu .row {
+  display: flex; align-items: center; gap: var(--sp-2); width: 100%;
+  padding: 6px 8px; border-radius: var(--r-sm); border: 0; background: none;
+  cursor: pointer; text-align: left; font-size: var(--t-sm); color: var(--ink-1);
+}
+.menu .row:hover { background: var(--surface-2); }
+.menu .row .tick { width: 14px; color: var(--focus); font-weight: 700; }
+.menu .row .n { margin-left: auto; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; font-size: var(--t-cap); }
+.menu .sep { height: 1px; background: var(--line); margin: var(--sp-1) 0; }
+.menu .foot { padding: var(--sp-2); display: grid; gap: var(--sp-2); }
+.menu input[type=datetime-local] {
+  width: 100%; background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 5px 7px; font-size: var(--t-sm);
+}
+.vr { width: 1px; height: 20px; background: var(--line); margin: 0 var(--sp-1); }
+.chips { display: flex; gap: var(--sp-1); flex-wrap: wrap; align-items: center; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-cap);
+  background: color-mix(in srgb, var(--focus) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--focus) 32%, transparent);
+  color: var(--ink-1); border-radius: 999px; padding: 3px 5px 3px 9px;
+}
+.chip .k { color: var(--ink-3); }
+.chip button { background: none; border: 0; cursor: pointer; color: var(--ink-3);
+  padding: 0 2px; line-height: 1; font-size: 13px; }
+.chip button:hover { color: var(--crit); }
+.linkish { background: none; border: 0; cursor: pointer; color: var(--ink-2);
+  font-size: var(--t-cap); text-decoration: underline; text-underline-offset: 3px; }
+.linkish:hover { color: var(--ink-1); }
+
+/* --- content ------------------------------------------------------------- */
+main { padding: var(--sp-5); flex: 1 1 auto; }
+.grid { display: grid; gap: var(--sp-3); grid-template-columns: repeat(12, 1fr); }
+.col-12{grid-column:span 12} .col-8{grid-column:span 8} .col-6{grid-column:span 6}
+.col-4{grid-column:span 4}  .col-3{grid-column:span 3}
+@media (max-width:1240px){ .col-3{grid-column:span 6} }
+@media (max-width:980px){ .col-8,.col-6,.col-4,.col-3{grid-column:span 12} }
+
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--shadow); min-width: 0;
+  display: flex; flex-direction: column;
+}
+.card > header {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line-2);
+}
+.card > header h2 { margin: 0; font-size: var(--t-sm); font-weight: 650;
+  letter-spacing: -.005em; }
+.card > .body { padding: var(--sp-4); flex: 1 1 auto; min-width: 0; }
+.card > .body.flush { padding: 0; }
+
+/* Rationale lives behind an affordance, not as a paragraph in the card.
+   Explanations printed at full weight next to data is what makes a dashboard
+   read as documentation instead of a product. */
+.info { position: relative; margin-left: auto; }
+.info > button {
+  width: 17px; height: 17px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--ink-3); font-size: 10px;
+  cursor: pointer; line-height: 1; padding: 0;
+}
+.info > button:hover { color: var(--ink-1); border-color: var(--ink-3); }
+.info .pop {
+  position: absolute; right: 0; top: 22px; width: 320px; z-index: 50;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--shadow-pop);
+  padding: var(--sp-3); font-size: var(--t-sm); color: var(--ink-2); line-height: 1.55;
+}
+.info .pop[hidden] { display: none; }
+
+/* --- stat tiles ---------------------------------------------------------- */
+.tile { padding: var(--sp-4); }
+.tile .label { font-size: var(--t-cap); letter-spacing: .05em; text-transform: uppercase;
+  color: var(--ink-3); display: flex; align-items: center; gap: 6px; }
+.tile .value { font-size: var(--t-num); font-weight: 680; letter-spacing: -.025em;
+  line-height: 1.1; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.tile .note { font-size: var(--t-cap); color: var(--ink-3); margin-top: 4px; }
+.tile .value.s1 { color: var(--s1); } .tile .value.s2 { color: var(--s2); }
+.tile .value.good { color: var(--good); } .tile .value.crit { color: var(--crit); }
+
+/* --- tables -------------------------------------------------------------- */
+.tablewrap { max-height: 420px; overflow: auto; border-radius: 0 0 var(--r-lg) var(--r-lg); }
+table { width: 100%; border-collapse: separate; border-spacing: 0;
+  font-variant-numeric: tabular-nums; font-size: var(--t-sm); }
+th, td { text-align: right; padding: 7px var(--sp-3); white-space: nowrap;
+  border-bottom: 1px solid var(--line-2); }
+th:first-child, td:first-child { text-align: left; }
+th {
+  position: sticky; top: 0; z-index: 2; background: var(--surface-2);
+  color: var(--ink-3); font-weight: 600; font-size: var(--t-cap);
+  letter-spacing: .04em; text-transform: uppercase; cursor: pointer;
+  user-select: none; border-bottom: 1px solid var(--line);
+}
+th:hover { color: var(--ink-1); }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--surface-2); }
+tbody tr:last-child td { border-bottom: 0; }
+td.dim { color: var(--ink-3); }
+td.strong { font-weight: 620; }
+
+/* --- states -------------------------------------------------------------- */
+.skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
+  var(--line-2) 63%); background-size: 400% 100%;
+  animation: sh 1.3s ease-in-out infinite; border-radius: var(--r-sm); }
+@keyframes sh { 0%{background-position:100% 0} 100%{background-position:0 0} }
+.skel-line { height: 11px; margin: 7px 0; }
+.empty { padding: var(--sp-5); text-align: center; color: var(--ink-3);
+  font-size: var(--t-sm); }
+.err { color: var(--crit); font-size: var(--t-sm); }
+.loading { opacity: .55; transition: opacity .15s; }
+
+/* --- misc ---------------------------------------------------------------- */
+.legend { display: flex; gap: var(--sp-4); flex-wrap: wrap; font-size: var(--t-cap);
+  color: var(--ink-2); margin-bottom: var(--sp-3); }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 13px; height: 3px; border-radius: 2px; }
+.legend .swatch.box { width: 10px; height: 10px; border-radius: 2px; }
+.note-inline { color: var(--ink-3); font-size: var(--t-cap); line-height: 1.6;
+  margin: var(--sp-3) 0 0; }
+.tag { display: inline-block; font-size: var(--t-micro); padding: 2px 7px;
+  border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2);
+  background: var(--surface-2); }
+.tag.on { border-color: var(--s1); color: var(--s1); }
+.tag.off { border-color: var(--line); color: var(--ink-3); }
+svg { display: block; width: 100%; overflow: visible; }
+.tip {
+  position: fixed; z-index: 90; pointer-events: none; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r);
+  box-shadow: var(--shadow-pop); padding: var(--sp-2) var(--sp-3);
+  font-size: var(--t-sm); min-width: 165px;
+}
+.tip[hidden] { display: none; }
+.tip .when { color: var(--ink-3); margin-bottom: 5px; font-size: var(--t-cap); }
+.tip .r { display: flex; align-items: center; gap: var(--sp-2); }
+.tip .r .k { width: 12px; height: 2px; border-radius: 2px; flex: none; }
+.tip .r .v { font-weight: 680; font-variant-numeric: tabular-nums; }
+.tip .r .n { color: var(--ink-2); margin-left: auto; font-size: var(--t-cap); }
+</style>
+
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="mark"></span><b>Concurrency</b></div>
+    <div class="grp">Analytics</div>
+    <nav id="nav-main"></nav>
+    <div class="grp">Platform</div>
+    <nav id="nav-plat"></nav>
+    <div class="foot">
+      <div><span class="dot"></span><span id="foot-host">connecting…</span></div>
+      <div id="foot-ver"></div>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <div class="topbar">
+      <div class="crumb"><h1 id="page-title">Overview</h1>
+        <span class="desc" id="page-desc"></span></div>
+      <span class="grow"></span>
+      <span class="stat-inline" id="hdr-perf"></span>
+      <button class="icon-btn" id="refresh" title="Refresh">↻</button>
+      <button class="icon-btn" id="theme" title="Toggle theme">◐</button>
+    </div>
+
+    <div class="toolbar" id="filters">
+      <div class="ctl" id="ctl-time"></div>
+      <span class="vr"></span>
+      <div class="ctl" id="ctl-platform"></div>
+      <div class="ctl" id="ctl-video_type"></div>
+      <div class="ctl" id="ctl-category"></div>
+      <div class="ctl" id="ctl-close_reason"></div>
+      <div class="chips" id="chips"></div>
+      <button class="linkish" id="clear" hidden>Clear all</button>
+    </div>
+
+    <main id="main"></main>
+  </div>
+</div>
+
+<div class="tip" id="tip" hidden></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const fmt = n => n == null ? "--" : n.toLocaleString();
+const fmt1 = n => n == null ? "--" : n.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1});
+
+/* --- dashboards. Each is a role, not a feature dump. -------------------- */
+/* The dashboards are a STORY, not a menu. Each step answers the question the
+   previous step raises, and the sidebar numbers them so a first-time reader
+   knows there is an order and where they are in it. */
+const TABS = [
+  {id:"overview", grp:"Analytics", name:"Concurrency",
+   desc:"Active concurrent sessions vs session-overlap baseline"},
+  {id:"ops",      grp:"Analytics", name:"Session Health",
+   desc:"Termination causes and inferred-vs-observed session closes"},
+  {id:"analyst",  grp:"Analytics", name:"Content",
+   desc:"Peak simultaneous viewers by title and category"},
+  {id:"product",  grp:"Analytics", name:"Audience",
+   desc:"Watch time and engagement by platform"},
+  {id:"regions",  grp:"Analytics", name:"Languages",
+   desc:"Audio-language distribution and regional coverage"},
+  {id:"live",     grp:"Platform",  name:"Ingestion",
+   desc:"Stream throughput, consumer lag, dead letter queue, schema registry"},
+  {id:"pipeline", grp:"Platform",  name:"Storage",
+   desc:"Serving-layer footprint and query cost"},
+  {id:"arch",     grp:"Platform",  name:"Architecture",
+   desc:"Component topology and SQL console"},
+];
+
+// Populated from /api/overview. Hardcoding the dimension list here is how the
+// UI ended up offering filters the backend could not honour.
+let DIMS = [];
+const DIM_LABEL = {platform:"Platform", video_type:"Type", category:"Category",
+                   close_reason:"Close reason", country:"Country"};
+
+const state = {
+  tab: location.hash.slice(1) || "overview",
+  from: null, to: null, preset: "day",
+  sel: {platform:[], video_type:[], category:[], close_reason:[]},
+  sort: {col:"sessions", dir:-1},
+};
+let OV = null, FACETS = null, openMenu = null;
+
+/* --- query string shared by every request, so numbers always agree ------ */
+function qs(extra) {
+  const p = new URLSearchParams();
+  if (state.from) p.set("from", state.from);
+  if (state.to)   p.set("to", state.to);
+  for (const d of DIMS) if (state.sel[d.key].length) p.set(d.key, state.sel[d.key].join(","));
+  for (const k in (extra||{})) p.set(k, extra[k]);
+  return p.toString();
+}
+async function api(path, extra) {
+  const r = await fetch(path + "?" + qs(extra));
+  const j = await r.json();
+  if (j.error) throw new Error(j.error);
+  return j;
+}
+
+/* =======================================================================
+   Charts. Vanilla SVG: no CDN, no npm -- venue wi-fi cannot break this.
+   ======================================================================= */
+const tip = $("#tip");
+function showTip(x, y, html) {
+  tip.innerHTML = html; tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  tip.style.left = Math.min(x + 14, innerWidth - r.width - 8) + "px";
+  tip.style.top  = Math.min(y + 14, innerHeight - r.height - 8) + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+const esc = s => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
+
+/* Dual-line concurrency chart with the gap between the curves filled.
+   The fill IS the message: audience an open-app model would have reported. */
+function chartConcurrency(host, d) {
+  const W = host.clientWidth || 900, H = 300;
+  const m = {t:10, r:14, b:24, l:52};
+  const fg = d.foreground, nv = d.naive;
+  if (!fg.length) { host.innerHTML = '<p class="note-inline">no data in this slice</p>'; return; }
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const maxY = Math.max(1, ...nv.map(p=>p[1]), ...fg.map(p=>p[1]));
+  const n = fg.length;
+  const X = i => m.l + (n<2 ? iw/2 : i/(n-1)*iw);
+  const Y = v => m.t + ih - (v/maxY)*ih;
+  const path = pts => pts.map((p,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(p[1]).toFixed(1)).join(" ");
+  // gap band: naive on top, foreground back along the bottom
+  const band = path(nv) + " " + fg.map((p,i)=>"L"+X(n-1-i).toFixed(1)+" "+Y(fg[n-1-i][1]).toFixed(1)).join(" ") + " Z";
+  const ticks = 4, gl = [], yl = [];
+  for (let i=0;i<=ticks;i++){ const v = maxY*i/ticks, y = Y(v);
+    gl.push(`<line x1="${m.l}" x2="${W-m.r}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`);
+    yl.push(`<text x="${m.l-8}" y="${y+4}" text-anchor="end" fill="var(--ink-muted)" font-size="11">${fmt(Math.round(v))}</text>`); }
+  const xl = [];
+  for (let i=0;i<=3;i++){ const idx = Math.round(i/3*(n-1));
+    xl.push(`<text x="${X(idx)}" y="${H-6}" text-anchor="${i===0?"start":i===3?"end":"middle"}" fill="var(--ink-muted)" font-size="11">${esc(fg[idx][0].slice(5,16))}</text>`); }
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="concurrency over time">
+    ${gl.join("")}${yl.join("")}${xl.join("")}
+    <path d="${band}" fill="var(--s2)" opacity=".14"/>
+    <path d="${path(nv)}" fill="none" stroke="var(--s2)" stroke-width="2" stroke-linejoin="round"/>
+    <path d="${path(fg)}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
+    <line id="cross" y1="${m.t}" y2="${m.t+ih}" stroke="var(--axis)" stroke-width="1" style="display:none"/>
+    <rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/>
+  </svg>`;
+  const svg = host.querySelector("svg"), cross = host.querySelector("#cross");
+  host.querySelector("#hit").addEventListener("pointermove", ev => {
+    const bb = svg.getBoundingClientRect();
+    const px = (ev.clientX - bb.left) / bb.width * W;
+    let i = Math.round((px - m.l) / (iw || 1) * (n-1));
+    i = Math.max(0, Math.min(n-1, i));
+    cross.style.display = ""; cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i));
+    const a = nv[i] ? nv[i][1] : 0, b = fg[i][1];
+    showTip(ev.clientX, ev.clientY, `<div class="when">${esc(fg[i][0])} UTC</div>
+      <div class="r"><span class="k" style="background:var(--s2)"></span><span class="v">${fmt(a)}</span><span class="n">naive</span></div>
+      <div class="r"><span class="k" style="background:var(--s1)"></span><span class="v">${fmt(b)}</span><span class="n">foreground-only</span></div>
+      <div class="r"><span class="k" style="background:transparent"></span><span class="v">${fmt(a-b)}</span><span class="n">over-reported</span></div>`);
+  });
+  host.querySelector("#hit").addEventListener("pointerleave", () => { hideTip(); cross.style.display="none"; });
+}
+
+/* Horizontal bars: magnitude by identity. Click a bar to narrow. */
+function chartBars(host, rows, valKey, dimKey, colorVar) {
+  if (!rows.length) { host.innerHTML = '<p class="note-inline">nothing in this slice</p>'; return; }
+  const top = rows.slice(0, 10);
+  const max = Math.max(...top.map(r => r[valKey] || 0), 1);
+  const rowH = 26, W = host.clientWidth || 480, labelW = Math.min(190, W*0.42);
+  const H = top.length * rowH;
+  const bars = top.map((r, i) => {
+    const w = Math.max(2, (r[valKey]||0)/max * (W - labelW - 62));
+    const y = i*rowH + 5;
+    return `<g class="bar" data-v="${esc(String(r.value))}" tabindex="0">
+      <rect x="0" y="${y-5}" width="${W}" height="${rowH-2}" fill="transparent"/>
+      <text x="0" y="${y+11}" fill="var(--ink-2)" font-size="12">${esc(String(r.value).slice(0,28))}</text>
+      <rect x="${labelW}" y="${y}" width="${w}" height="${rowH-12}" rx="4" fill="var(${colorVar})"/>
+      <text x="${labelW+w+8}" y="${y+11}" fill="var(--ink-2)" font-size="12" font-variant-numeric="tabular-nums">${fmt(r[valKey])}</text>
+    </g>`;
+  }).join("");
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img">${bars}</svg>`;
+  host.querySelectorAll(".bar").forEach(g => {
+    g.style.cursor = "pointer";
+    g.addEventListener("click", () => toggleFilter(dimKey, g.dataset.v));
+    g.addEventListener("pointermove", ev => {
+      const r = top.find(t => String(t.value) === g.dataset.v);
+      showTip(ev.clientX, ev.clientY,
+        `<div class="when">${esc(String(r.value))}</div>
+         <div class="r"><span class="k" style="background:var(${colorVar})"></span><span class="v">${fmt(r[valKey])}</span><span class="n">${esc(valKey.replace(/_/g," "))}</span></div>
+         <div class="r"><span class="k" style="background:transparent"></span><span class="v">${fmt(r.sessions)}</span><span class="n">sessions</span></div>
+         <div class="note-inline">click to filter</div>`);
+    });
+    g.addEventListener("pointerleave", hideTip);
+  });
+}
+
+/* Sequential ramp (one hue, light->dark) for magnitude. Never a rainbow. */
+const RAMP = ["#cde2fb","#9ec5f4","#6da7ec","#3987e5","#2a78d6","#1c5cab","#104281"];
+const rampFor = (v, max) => RAMP[Math.min(RAMP.length-1,
+  Math.max(0, Math.round((max ? v/max : 0) ** 0.55 * (RAMP.length-1))))];
+
+/* Heatmap: date x hour-of-day. A cell with no delta is NOT zero -- it means
+   no change was recorded, so it renders as absent rather than as "nobody". */
+function chartHeatmap(host, cells) {
+  if (!cells.length) { host.innerHTML = '<p class="note-inline">no data</p>'; return; }
+  const dates = [...new Set(cells.map(c=>c.date))].sort();
+  const max = Math.max(...cells.map(c=>c.peak));
+  const by = new Map(cells.map(c=>[c.date+"|"+c.hour, c.peak]));
+  const W = host.clientWidth || 900, labelW = 82, cw = (W-labelW)/24, ch_ = 20;
+  const H = dates.length*ch_ + 20;
+  let s = "";
+  for (let h=0; h<24; h+=3)
+    s += `<text x="${labelW+h*cw}" y="12" fill="var(--ink-muted)" font-size="10">${String(h).padStart(2,"0")}</text>`;
+  dates.forEach((d,r) => {
+    s += `<text x="0" y="${20+r*ch_+14}" fill="var(--ink-muted)" font-size="11">${esc(d.slice(5))}</text>`;
+    for (let h=0; h<24; h++) {
+      const v = by.get(d+"|"+h);
+      const fill = v == null ? "var(--grid)" : rampFor(v, max);
+      s += `<rect class="cell" data-d="${d}" data-h="${h}" data-v="${v==null?"":v}"
+        x="${labelW+h*cw+1}" y="${20+r*ch_+1}" width="${Math.max(1,cw-2)}" height="${ch_-2}"
+        rx="2" fill="${fill}"/>`;
+    }
+  });
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="peak concurrency by hour">${s}</svg>
+    <div class="legend" style="margin-top:8px">
+      <span class="key">low</span>
+      ${RAMP.map(c=>`<span class="swatch box" style="background:${c}"></span>`).join("")}
+      <span class="key">${fmt(max)} peak</span>
+      <span class="key"><span class="swatch box" style="background:var(--grid)"></span>no delta recorded</span>
+    </div>`;
+  host.querySelectorAll(".cell").forEach(c => {
+    c.addEventListener("pointermove", ev => showTip(ev.clientX, ev.clientY,
+      `<div class="when">${esc(c.dataset.d)} ${String(c.dataset.h).padStart(2,"0")}:00 UTC</div>
+       <div class="r"><span class="k" style="background:${c.getAttribute("fill")}"></span>
+       <span class="v">${c.dataset.v === "" ? "no delta" : fmt(+c.dataset.v)}</span>
+       <span class="n">peak concurrency</span></div>`));
+    c.addEventListener("pointerleave", hideTip);
+  });
+}
+
+/* India tile cartogram. One square per state, geographically arranged.
+   Deliberately schematic: we have NO state-level data. States are shaded by
+   the session count of the language they predominantly speak, which is an
+   inference, not a measurement -- the card says so, loudly. */
+const IN_TILES = [
+  ["JK",2,0],["LA",3,0],
+  ["PB",2,1],["HP",3,1],["UK",4,1],
+  ["RJ",1,2],["HR",2,2],["DL",3,2],["UP",4,2],["BR",5,2],["SK",6,2],["AR",7,2],
+  ["GJ",0,3],["MP",2,3],["JH",4,3],["WB",5,3],["AS",6,3],["NL",7,3],
+  ["MH",1,4],["CG",3,4],["OD",4,4],["ML",5,4],["MN",6,4],["TR",7,4],
+  ["GA",1,5],["KA",2,5],["TS",3,5],["AP",4,5],["MZ",5,5],
+  ["KL",2,6],["TN",3,6],["PY",4,6],
+];
+const LANG_STATES = {
+  Hindi:["UP","BR","MP","RJ","HR","DL","JH","CG","UK","HP"],
+  Marathi:["MH"], Bengali:["WB","TR"], Malayalam:["KL"],
+  Tamil:["TN","PY"], Telugu:["TS","AP"], Kannada:["KA"],
+};
+function chartTileMap(host, rows) {
+  const byLang = Object.fromEntries(rows.map(r=>[r.value, r.sessions]));
+  const stateLang = {};
+  for (const [lang, sts] of Object.entries(LANG_STATES))
+    for (const st of sts) stateLang[st] = lang;
+  const mapped = Object.values(LANG_STATES).flat();
+  const vals = mapped.map(st => byLang[stateLang[st]] || 0);
+  const max = Math.max(1, ...vals);
+  const size = 40, gap = 4, cols = 8, rowsN = 7;
+  const W = cols*(size+gap), H = rowsN*(size+gap);
+  const tiles = IN_TILES.map(([st,c,r]) => {
+    const lang = stateLang[st], v = lang ? (byLang[lang]||0) : null;
+    const fill = v == null ? "var(--grid)" : rampFor(v, max);
+    const ink = (v != null && v/max > .55) ? "#fff" : "var(--ink-2)";
+    return `<g class="tile-st" data-st="${st}" data-lang="${lang||""}" data-v="${v==null?"":v}">
+      <rect x="${c*(size+gap)}" y="${r*(size+gap)}" width="${size}" height="${size}"
+            rx="4" fill="${fill}"/>
+      <text x="${c*(size+gap)+size/2}" y="${r*(size+gap)+size/2+4}" text-anchor="middle"
+            font-size="11" fill="${ink}">${st}</text></g>`;
+  }).join("");
+  const unmapped = (byLang["Not stated"]||0) + (byLang["English"]||0) + (byLang["Other"]||0);
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="max-width:${W}px" role="img"
+      aria-label="Indian states shaded by predominant language">${tiles}</svg>
+    <p class="note-inline"><b>This is a proxy, not observed geography.</b> Every event in the
+      dataset has <code>country = india</code> and no state, city or region field. States are
+      shaded by the session count of the language predominantly spoken there, so all ten
+      Hindi-belt states carry the same value — this is a language map drawn on a state grid,
+      not per-state data. <b>${fmt(unmapped)}</b> sessions (not stated, English, or other)
+      cannot be placed at all.</p>`;
+  host.querySelectorAll(".tile-st").forEach(g => {
+    g.addEventListener("pointermove", ev => showTip(ev.clientX, ev.clientY,
+      `<div class="when">${esc(g.dataset.st)}</div>` + (g.dataset.lang
+        ? `<div class="r"><span class="k" style="background:var(--s1)"></span>
+             <span class="v">${fmt(+g.dataset.v)}</span><span class="n">${esc(g.dataset.lang)} sessions</span></div>
+           <div class="note-inline">language-level figure, shared by every ${esc(g.dataset.lang)} state</div>`
+        : `<div class="note-inline">no language in the data maps here</div>`)));
+    g.addEventListener("pointerleave", hideTip);
+  });
+}
+
+/* Sortable table -- the rows behind the curve, and the keyboard path to
+   every value a tooltip shows. */
+function renderTable(host, rows, cols, dimKey) {
+  const s = state.sort;
+  const sorted = rows.slice().sort((a,b) => {
+    const x = a[s.col], y = b[s.col];
+    if (x == null) return 1; if (y == null) return -1;
+    return (typeof x === "string" ? x.localeCompare(y) : x - y) * s.dir;
+  });
+  host.innerHTML = `<div class="tablewrap"><table>
+    <thead><tr>${cols.map(c=>`<th data-c="${c.k}">${esc(c.t)}${s.col===c.k?(s.dir<0?" ↓":" ↑"):""}</th>`).join("")}</tr></thead>
+    <tbody>${sorted.map(r=>`<tr data-v="${esc(String(r.value))}">${
+      cols.map(c=>`<td class="${c.dim?"dim":""}">${c.f?c.f(r[c.k],r):fmt(r[c.k])}</td>`).join("")}</tr>`).join("")}</tbody>
+  </table></div>`;
+  host.querySelectorAll("th").forEach(th => th.addEventListener("click", () => {
+    const c = th.dataset.c;
+    state.sort = {col:c, dir: s.col===c ? -s.dir : -1};
+    renderTable(host, rows, cols, dimKey);
+  }));
+  host.querySelectorAll("tbody tr").forEach(tr => tr.addEventListener("click",
+    () => toggleFilter(dimKey, tr.dataset.v)));
+}
+
+/* =======================================================================
+   Filters. Progressive narrowing: a click anywhere adds a chip, and every
+   card below re-scopes against the same slice.
+   ======================================================================= */
+function toggleFilter(dim, value) {
+  if (!dim) return;
+  const arr = state.sel[dim];
+  const i = arr.indexOf(value);
+  if (i >= 0) arr.splice(i, 1); else arr.push(value);
+  refresh();
+}
+const PRESETS = [
+  {id:"full",  label:"Full range"},
+  {id:"day",   label:"Peak day"},
+  {id:"hour",  label:"Peak hour"},
+  {id:"custom",label:"Custom range"},
+];
+function applyPreset(id) {
+  state.preset = id;
+  if (!OV) return;
+  const [lo, hi] = OV.bounds;
+  if (id === "full") { state.from = null; state.to = null; }
+  if (id === "day")  { state.from = shift(hi, -24*3600); state.to = hi; }
+  if (id === "hour") { state.from = shift(hi, -3600);     state.to = hi; }
+}
+function shift(ts, secs) {
+  const d = new Date(ts.replace(" ", "T") + "Z");
+  return new Date(d.getTime() + secs*1000).toISOString().slice(0,19).replace("T"," ");
+}
+function menu(host, cap, current, rows, onPick, footer) {
+  host.innerHTML = `<button><span class="cap">${esc(cap)}</span>${esc(current)}</button>
+    <div class="menu" hidden></div>`;
+  const btn = host.querySelector("button"), m = host.querySelector(".menu");
+  m.innerHTML = rows.map(r => `<button class="row" data-v="${esc(String(r.value))}">
+      <span class="tick">${r.on?"✓":""}</span><span>${esc(r.label)}</span>
+      ${r.n!=null?`<span class="n">${fmt(r.n)}</span>`:""}</button>`).join("")
+    + (footer ? `<div class="sep"></div><div class="foot">${footer}</div>` : "");
+  btn.addEventListener("click", e => {
+    e.stopPropagation();
+    const wasOpen = !m.hidden;
+    if (openMenu) openMenu.hidden = true;
+    m.hidden = wasOpen; openMenu = wasOpen ? null : m;
+  });
+  m.addEventListener("click", e => {
+    e.stopPropagation();
+    const r = e.target.closest(".row");
+    if (r) onPick(r.dataset.v);
+  });
+  return m;
+}
+document.addEventListener("click", () => { if (openMenu) { openMenu.hidden = true; openMenu = null; } });
+
+function renderFilters() {
+  const cur = PRESETS.find(p => p.id === state.preset);
+  const m = menu($("#ctl-time"), "time", cur ? cur.label : "Full range",
+    PRESETS.map(p => ({value:p.id, label:p.label, on: p.id===state.preset})),
+    v => { if (v !== "custom") { applyPreset(v); refresh(); } else { state.preset="custom"; renderFilters(); } },
+    state.preset === "custom" ? `<label style="font-size:12px;color:var(--ink-muted)">from
+        <input type="datetime-local" id="cf" value="${(state.from||OV.bounds[0]).replace(" ","T")}"></label>
+      <label style="font-size:12px;color:var(--ink-muted)">to
+        <input type="datetime-local" id="ct" value="${(state.to||OV.bounds[1]).replace(" ","T")}"></label>` : "");
+  if (state.preset === "custom") {
+    const commit = () => {
+      const f = m.querySelector("#cf").value, t = m.querySelector("#ct").value;
+      if (f && t) { state.from = f.replace("T"," ") + ":00".slice(f.length>16?3:0);
+                    state.to = t.replace("T"," ") + ":00".slice(t.length>16?3:0); refresh(); }
+    };
+    m.querySelectorAll("input").forEach(i => i.addEventListener("change", commit));
+  }
+  const allowed = new Set((OV && OV.view_dims && OV.view_dims[state.tab]) || []);
+  for (const d of DIMS) {
+    const host = $("#ctl-" + d.key);
+    if (!host) continue;
+    // A control that this view cannot honour is REMOVED, not disabled: the
+    // backend declares what it supports and the UI obeys it, so the class of
+    // bug where a filter is offered and silently ignored cannot recur.
+    if (!allowed.has(d.key)) { host.innerHTML = ""; host.hidden = true; continue; }
+    host.hidden = false;
+    const vals = (FACETS && FACETS[d.key]) || [];
+    const sel = state.sel[d.key] || [];
+    const cap = sel.length === 0 ? "All" : sel.length === 1 ? sel[0] : sel.length + " selected";
+    const m = menu(host, d.label, cap,
+      vals.map(v => ({value: v.value, label: v.value, n: v.sessions,
+                      on: sel.includes(v.value)})),
+      v => toggleFilter(d.key, v));
+    if (sel.length) host.querySelector("button").classList.add("on");
+  }
+  const chips = [];
+  for (const d of DIMS) {
+    if (!allowed.has(d.key)) continue;
+    for (const v of (state.sel[d.key] || []))
+      chips.push(`<span class="chip"><span class="k">${esc(d.label)}</span>
+        <b>${esc(v)}</b>
+        <button data-d="${d.key}" data-v="${esc(v)}" aria-label="Remove">×</button></span>`);
+  }
+  $("#chips").innerHTML = chips.join("");
+  $("#chips").querySelectorAll("button").forEach(b =>
+    b.addEventListener("click", () => toggleFilter(b.dataset.d, b.dataset.v)));
+  $("#clear").hidden = chips.length === 0;
+  $("#filters").style.display = allowed.size ? "" : "none";
+}
+$("#clear").addEventListener("click", () => {
+  for (const d of DIMS) state.sel[d.key] = [];
+  refresh();
+});
+
+/* =======================================================================
+   Dashboards
+   ======================================================================= */
+function tile(label, value, note, cls) {
+  return `<div class="card col-3"><div class="tile">
+    <div class="label">${esc(label)}</div>
+    <div class="value ${cls || ""}">${value}</div>
+    <div class="note">${note || ""}</div></div></div>`;
+}
+
+/* A card's rationale belongs behind an affordance. Printing the reasoning at
+   full weight beside the data is what makes a dashboard read as documentation
+   rather than a product -- so `why` becomes an info popover, not a paragraph. */
+let _infoSeq = 0;
+function card(title, why, body, col) {
+  const id = "i" + (++_infoSeq);
+  const info = why ? `<span class="info">
+      <button data-info="${id}" aria-label="Why this matters">i</button>
+      <div class="pop" id="${id}" hidden>${why}</div></span>` : "";
+  return `<div class="card ${col || "col-6"}">
+    <header><h2>${esc(title)}</h2>${info}</header>
+    <div class="body">${body}</div></div>`;
+}
+
+function wireInfo(root) {
+  (root || document).querySelectorAll("[data-info]").forEach(b =>
+    b.addEventListener("click", e => {
+      e.stopPropagation();
+      const pop = document.getElementById(b.dataset.info);
+      document.querySelectorAll(".info .pop").forEach(p => { if (p !== pop) p.hidden = true; });
+      pop.hidden = !pop.hidden;
+    }));
+}
+document.addEventListener("click", () =>
+  document.querySelectorAll(".info .pop").forEach(p => p.hidden = true));
+
+function skeleton(rows) {
+  return `<div>${Array.from({length: rows || 4},
+    () => `<div class="skel skel-line"></div>`).join("")}</div>`;
+}
+
+async function viewOverview(main) {
+  main.innerHTML = `<div class="grid" id="g">
+    ${tile("Peak — naive overlap","…","session start → end","s2")}
+    ${tile("Peak — foreground only","…","active = intent ∧ alive","s1")}
+    ${tile("Over-reported","…","of the naive figure")}
+    ${tile("Avg concurrency","…","across the slice")}
+    ${card("Concurrency over time","The filled band is audience an “open app = viewer” model would have reported.",
+      `<div class="legend">
+        <span class="key"><span class="swatch" style="background:var(--s2)"></span>naive session overlap</span>
+        <span class="key"><span class="swatch" style="background:var(--s1)"></span>foreground-only</span>
+        <span class="key"><span class="swatch box" style="background:var(--s2);opacity:.28"></span>over-reported</span>
+       </div><div id="chart"></div>`, "col-12")}
+    ${card("Peak concurrency by hour","Each cell is the highest concurrency reached in that hour, UTC.",
+      `<div id="heat"></div>`, "col-12")}
+    ${card("Peak by platform","Click a bar to scope every card on this page.", `<div id="bars"></div>`)}
+    ${card("The rows behind the curve","Click a row to filter. Peaks are not additive — see note.", `<div id="tbl"></div>`)}
+  </div>`;
+  const [s, b, hm] = await Promise.all([
+    api("/api/series"), api("/api/breakdown", {dim:"platform"}), api("/api/heatmap")]);
+  const g = $("#g").children;
+  g[0].querySelector(".value").textContent = fmt(s.nv.peak);
+  g[1].querySelector(".value").textContent = fmt(s.fg.peak);
+  g[1].querySelector(".note").textContent = "peak at " + (s.fg.peak_at||"") + " UTC";
+  g[2].querySelector(".value").textContent = fmt(s.overcount);
+  g[2].querySelector(".note").textContent = s.overcount_pct + "% of the naive figure";
+  g[3].querySelector(".value").textContent = fmt1(s.fg.avg);
+  g[3].querySelector(".note").textContent = fmt(s.minutes) + " minutes";
+  chartConcurrency($("#chart"), s);
+  chartBars($("#bars"), b.rows, "peak", "platform", "--s1");
+  renderTable($("#tbl"), b.rows, [
+    {k:"value", t:"platform"}, {k:"peak", t:"peak"}, {k:"sessions", t:"sessions"},
+    {k:"watch_hours", t:"watch hrs", f:fmt1}, {k:"avg_seconds", t:"avg s", f:fmt1, dim:true},
+  ], "platform");
+  $("#tbl").insertAdjacentHTML("beforeend",
+    `<p class="note-inline">Peaks sum to ${fmt(b.rows.reduce((a,r)=>a+(r.peak||0),0))} against an
+     overall peak of ${fmt(s.fg.peak)} — each platform peaks at a different minute, so peak
+     is not additive across dimensions.</p>`);
+  perf(s);
+}
+
+async function viewOps(main) {
+  main.innerHTML = `<div class="grid" id="g">
+    ${tile("Open intervals","…","still active at range end")}
+    ${tile("Evidence-gap closes","…","client went silent >120s")}
+    ${tile("Backgrounded","…","app sent to background")}
+    ${tile("Sessions","…","in this slice")}
+    ${card("Why sessions stopped counting","Every close is attributed to an explicit cause. evidence_gap is the only inferred one.",
+      `<div id="bars"></div>`)}
+    ${card("Close reasons in detail","Click a row to scope the page to that failure mode.", `<div id="tbl"></div>`)}
+    ${card("Concurrency over time","Same slice, for context on when a spike happened.",
+      `<div id="chart"></div>`, "col-12")}
+  </div>`;
+  const [cr, s] = await Promise.all([
+    api("/api/breakdown", {dim:"close_reason"}), api("/api/series")]);
+  const by = Object.fromEntries(cr.rows.map(r => [r.value, r]));
+  const g = $("#g").children;
+  // totals come from the server's own measurement -- summing per-group
+  // uniqExact would double-count any session present in two groups.
+  const T = cr.totals;
+  g[0].querySelector(".value").textContent = fmt(T.open_intervals);
+  g[0].querySelector(".note").textContent =
+    T.open_intervals ? "hot tier is carrying these" : "none — sealed range";
+  g[1].querySelector(".value").textContent = fmt(by.evidence_gap ? by.evidence_gap.intervals : 0);
+  g[1].querySelector(".note").textContent = T.intervals
+    ? ((by.evidence_gap ? by.evidence_gap.intervals : 0) / T.intervals * 100).toFixed(2) + "% of intervals"
+    : "";
+  g[2].querySelector(".value").textContent = fmt(by.backgrounded ? by.backgrounded.intervals : 0);
+  g[3].querySelector(".value").textContent = fmt(T.sessions);
+  chartBars($("#bars"), cr.rows, "intervals", "close_reason", "--s4");
+  renderTable($("#tbl"), cr.rows, [
+    {k:"value", t:"close reason"}, {k:"intervals", t:"intervals"},
+    {k:"sessions", t:"sessions"}, {k:"avg_seconds", t:"avg s", f:fmt1, dim:true},
+  ], "close_reason");
+  chartConcurrency($("#chart"), s);
+  perf(cr);
+}
+
+async function viewAnalyst(main) {
+  main.innerHTML = `<div class="grid" id="g">
+    ${card("Highest-concurrency titles","Peak simultaneous viewers per title, joined from content_dim.",
+      `<div id="tc"></div>`, "col-12")}
+    ${card("Peak by category","Click to scope.", `<div id="bars"></div>`)}
+    ${card("Categories in detail","", `<div id="tbl"></div>`)}
+  </div>`;
+  const [tc, cat] = await Promise.all([
+    api("/api/top_content", {limit:20}), api("/api/breakdown", {dim:"category"})]);
+  renderTable($("#tc"), tc.rows.map(r => ({...r, value:r.title})), [
+    {k:"value", t:"title"}, {k:"peak", t:"peak"},
+    {k:"video_type", t:"type", f:v=>esc(v||""), dim:true},
+    {k:"category", t:"category", f:v=>esc(v||""), dim:true},
+  ], null);
+  chartBars($("#bars"), cat.rows, "sessions", "category", "--s3");
+  renderTable($("#tbl"), cat.rows, [
+    {k:"value", t:"category"}, {k:"sessions", t:"sessions"},
+    {k:"watch_hours", t:"watch hrs", f:fmt1}, {k:"avg_seconds", t:"avg s", f:fmt1, dim:true},
+  ], "category");
+  perf(tc);
+}
+
+async function viewProduct(main) {
+  main.innerHTML = `<div class="grid" id="g">
+    ${tile("Sessions","…","unique video sessions")}
+    ${tile("Watch hours","…","summed active time")}
+    ${tile("Avg session","…","seconds of active watch")}
+    ${tile("Platforms","…","with any activity")}
+    ${card("Watch hours by platform","Where the time actually goes.", `<div id="bars"></div>`)}
+    ${card("Engagement by platform","Click a row to scope.", `<div id="tbl"></div>`)}
+    ${card("Type mix","vod vs live.", `<div id="vt"></div>`, "col-12")}
+  </div>`;
+  const [pf, vt] = await Promise.all([
+    api("/api/breakdown", {dim:"platform"}), api("/api/breakdown", {dim:"video_type"})]);
+  const g = $("#g").children;
+  const T = pf.totals;                       // measured, not summed
+  g[0].querySelector(".value").textContent = fmt(T.sessions);
+  g[1].querySelector(".value").textContent = fmt1(T.watch_hours);
+  g[2].querySelector(".value").textContent = fmt1(T.watch_hours*3600/Math.max(T.sessions,1));
+  g[3].querySelector(".value").textContent = fmt(pf.rows.length);
+  chartBars($("#bars"), pf.rows, "watch_hours", "platform", "--s1");
+  renderTable($("#tbl"), pf.rows, [
+    {k:"value", t:"platform"}, {k:"sessions", t:"sessions"},
+    {k:"watch_hours", t:"watch hrs", f:fmt1}, {k:"avg_seconds", t:"avg s", f:fmt1, dim:true},
+  ], "platform");
+  chartBars($("#vt"), vt.rows, "sessions", "video_type", "--s3");
+  perf(pf);
+}
+
+async function viewPipeline(main) {
+  main.innerHTML = `<div class="grid">
+    ${tile("Events","…","raw_events on Cloud")}
+    ${tile("Intervals","…","session_active_intervals")}
+    ${tile("Delta rows","…","vs a minute grid")}
+    ${tile("Checkpoints","…","hourly, per dimension")}
+    ${card("Storage argument","Why deltas instead of exploding every active minute.",
+      `<div id="cmp"></div>`, "col-12")}
+  </div>`;
+  const g = main.querySelectorAll(".tile");
+  g[0].querySelector(".value").textContent = fmt(OV.events);
+  g[1].querySelector(".value").textContent = fmt(OV.intervals);
+  g[2].querySelector(".value").textContent = fmt(OV.delta_rows);
+  g[2].querySelector(".note").textContent =
+    fmt(OV.grid_rows_avoided) + " rows a minute grid would need";
+  g[3].querySelector(".value").textContent = fmt(OV.checkpoints);
+  const ratio = OV.grid_rows_avoided / Math.max(OV.delta_rows,1);
+  $("#cmp").innerHTML = `<p class="note-inline">
+    A minute grid stores one row per active minute per session, so it grows with total
+    <em>watch time</em>. The delta model stores exactly two rows per interval regardless of
+    duration: <b>${fmt(OV.delta_rows)}</b> rows against <b>${fmt(OV.grid_rows_avoided)}</b>,
+    a <b>${fmt1(ratio)}×</b> difference on this dataset — and the gap widens as sessions
+    lengthen.</p>`;
+}
+
+/* ---------------------------------------------------------------------
+   Live pipeline. Polls while the tab is open; stops when you leave it.
+   Each component reports independently, so a dead dependency shows as one
+   red panel rather than a blank page -- during an incident the useful
+   information is WHICH part stopped.
+   --------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------
+   Animated pipeline flow. Pure SVG + CSS -- no three.js, no CDN.
+   The motion is DATA, not decoration: particle rate on each edge is scaled
+   from the live counters, so a stalled consumer visibly stops moving and a
+   DLQ spike visibly thickens the reject path. An animation that looks the
+   same whether the pipeline is healthy or dead is worse than none.
+   --------------------------------------------------------------------- */
+const FLOW_NODES = [
+  {id:"src",  x:  40, y:104, w:104, h:44, label:"Producers",  sub:"player events"},
+  {id:"kafka",x: 196, y:104, w:112, h:44, label:"Kafka",      sub:"6 partitions"},
+  {id:"val",  x: 360, y:104, w:112, h:44, label:"Validator",  sub:"contract"},
+  {id:"dedup",x: 524, y:104, w:112, h:44, label:"Dedup",      sub:"Redis SETNX"},
+  {id:"ch",   x: 688, y:104, w:120, h:44, label:"ClickHouse", sub:"batched"},
+  {id:"dlq",  x: 360, y:196, w:112, h:40, label:"DLQ",        sub:"quarantine"},
+  {id:"redis",x: 524, y: 24, w:112, h:40, label:"Redis",      sub:"session state"},
+];
+const FLOW_EDGES = [
+  {from:"src",  to:"kafka", key:"in"},
+  {from:"kafka",to:"val",   key:"in"},
+  {from:"val",  to:"dedup", key:"ok"},
+  {from:"dedup",to:"ch",    key:"ok"},
+  {from:"val",  to:"dlq",   key:"dlq",   drop:true},
+  {from:"dedup",to:"redis", key:"state", up:true},
+];
+
+function edgePath(a, b, opt) {
+  const ax = a.x + a.w, ay = a.y + a.h / 2;
+  const bx = b.x,       by = b.y + b.h / 2;
+  if (opt && (opt.drop || opt.up)) {
+    const mx = a.x + a.w / 2;
+    return `M ${mx} ${opt.drop ? a.y + a.h : a.y} V ${opt.drop ? by : by + b.h} `
+         + `H ${b.x + b.w / 2}`;
+  }
+  const mid = (ax + bx) / 2;
+  return `M ${ax} ${ay} C ${mid} ${ay}, ${mid} ${by}, ${bx} ${by}`;
+}
+
+function renderFlow(host, rates) {
+  const W = 840, H = 264;
+  const byId = Object.fromEntries(FLOW_NODES.map(n => [n.id, n]));
+  const defs = FLOW_EDGES.map((e, i) => {
+    const opt = {drop: e.drop, up: e.up};
+    return `<path id="fp${i}" d="${edgePath(byId[e.from], byId[e.to], opt)}" fill="none"/>`;
+  }).join("");
+
+  const wires = FLOW_EDGES.map((e, i) => {
+    const stroke = e.drop ? "var(--crit)" : e.key === "state" ? "var(--s3)" : "var(--s1)";
+    const rate = Math.max(0, rates[e.key] || 0);
+    const dur = rate <= 0 ? 0 : Math.max(0.55, 3.2 - Math.min(rate, 1) * 2.5);
+    const dots = rate <= 0 ? "" : Array.from({length: 3}, (_, k) => `
+      <circle r="3.2" fill="${stroke}">
+        <animateMotion dur="${dur}s" repeatCount="indefinite"
+          begin="${(dur / 3 * k).toFixed(2)}s">
+          <mpath href="#fp${i}"/></animateMotion></circle>`).join("");
+    return `<use href="#fp${i}" stroke="${stroke}" stroke-opacity=".28"
+              stroke-width="${e.drop ? 1.5 : 2}"
+              ${e.drop ? 'stroke-dasharray="4 4"' : ""}/>${dots}`;
+  }).join("");
+
+  const boxes = FLOW_NODES.map(n => `
+    <g>
+      <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="8"
+            fill="var(--surface-2)" stroke="var(--line)"/>
+      <text x="${n.x + n.w/2}" y="${n.y + n.h/2 - 2}" text-anchor="middle"
+            font-size="12" font-weight="620" fill="var(--ink-1)">${esc(n.label)}</text>
+      <text x="${n.x + n.w/2}" y="${n.y + n.h/2 + 13}" text-anchor="middle"
+            font-size="10" fill="var(--ink-3)">${esc(n.sub)}</text>
+    </g>`).join("");
+
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="pipeline flow, particle rate scaled to live throughput">
+    <defs>${defs}</defs>${wires}${boxes}</svg>
+    <p class="note-inline">Particle rate is scaled from the live counters — if the
+      consumer stalls the flow stops moving. Idle edges are drawn without particles
+      rather than animating a pipeline that is not running.</p>`;
+}
+
+/* Count-up on stat values. Short, eased, and skipped for non-numerics so it
+   never mangles a label. */
+function countUp(el, to, fmtFn) {
+  const from = parseFloat((el.textContent || "").replace(/[^0-9.]/g, "")) || 0;
+  if (!isFinite(to)) { el.textContent = to; return; }
+  const t0 = performance.now(), dur = 420;
+  function step(now) {
+    const p = Math.min(1, (now - t0) / dur);
+    const e = 1 - Math.pow(1 - p, 3);
+    el.textContent = (fmtFn || fmt)(Math.round(from + (to - from) * e));
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+let _liveTimer = null;
+function stopLive() { if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; } }
+
+async function viewLive(main) {
+  main.innerHTML = `<div class="grid" id="g">
+    ${tile("Kafka backlog","…","messages in sony.events")}
+    ${tile("Dedup keys","…","Redis idempotency set")}
+    ${tile("Open sessions","…","cached in Redis")}
+    ${tile("DLQ","…","records isolated")}
+    ${card("Pipeline flow",
+      "Particle rate on each edge is scaled from the live counters, so the animation "
+      + "carries information: a stalled consumer stops moving, and the reject path "
+      + "only animates when records are actually being quarantined.",
+      `<div id="flow"></div>`, "col-12")}
+    ${card("Ingest rate",
+      "Events per minute from the ingest_rate materialized view. Incremental on "
+      + "insert — the cost is proportional to what arrived, not to what is retained.",
+      `<div id="rate"></div>`, "col-12")}
+    ${card("Producer schemas seen","A new fingerprint is a schema change. compatible=false means a required column could not be resolved.",
+      `<div id="schemas"></div>`)}
+    ${card("Dead letter queue","Malformed events isolated with their reason — the pipeline never stops for a bad record.",
+      `<div id="dlq"></div>`)}
+    ${card("Components","", `<div id="health"></div>`, "col-12")}
+  </div>`;
+
+  async function tick() {
+    let d;
+    try { d = await (await fetch("/api/pipeline_live")).json(); }
+    catch (e) { return; }
+    if (state.tab !== "live") { stopLive(); return; }
+    const g = $("#g").children;
+    const kb = d.kafka && d.kafka.topics["sony.events"];
+    if (kb) countUp(g[0].querySelector(".value"), kb.messages);
+    else g[0].querySelector(".value").textContent = "—";
+    g[0].querySelector(".note").textContent = kb ? kb.partitions + " partitions" : "kafka unreachable";
+    if (d.redis) countUp(g[1].querySelector(".value"), d.redis.dedup_keys);
+    else g[1].querySelector(".value").textContent = "—";
+    g[1].querySelector(".note").textContent = d.redis ? d.redis.memory + " resident" : "redis unreachable";
+    if (d.redis) countUp(g[2].querySelector(".value"), d.redis.open_sessions);
+    else g[2].querySelector(".value").textContent = "—";
+    const dlqTotal = d.dlq.reduce((a, r) => a + r.count, 0);
+    countUp(g[3].querySelector(".value"), dlqTotal);
+
+    // Normalise each edge to 0..1 so the animation reflects relative activity.
+    const okRows = d.clickhouse ? d.clickhouse.stream_rows : 0;
+    const norm = v => Math.max(0, Math.min(1, v));
+    renderFlow($("#flow"), {
+      in:    norm((kb ? kb.messages : 0) / 50000),
+      ok:    norm(okRows / 50000),
+      dlq:   dlqTotal > 0 ? norm(dlqTotal / 5000) : 0,
+      state: d.redis && d.redis.open_sessions > 0 ? norm(d.redis.open_sessions / 2000) : 0,
+    });
+    g[3].querySelector(".note").textContent = d.dlq.length + " distinct reasons";
+
+    // ingest sparkline
+    const pts = d.ingest;
+    if (pts.length) {
+      const W = $("#rate").clientWidth || 900, H = 130, max = Math.max(...pts.map(p=>p.events), 1);
+      const bw = W / pts.length;
+      $("#rate").innerHTML = `<svg viewBox="0 0 ${W} ${H}">` + pts.map((p,i) => {
+        const h = Math.max(1, p.events / max * (H - 22));
+        return `<rect x="${i*bw+0.5}" y="${H-20-h}" width="${Math.max(1,bw-1.5)}" height="${h}"
+                 rx="2" fill="var(--s1)"><title>${esc(p.minute)} · ${fmt(p.events)} events</title></rect>`;
+      }).join("") + `<text x="0" y="${H-4}" fill="var(--ink-muted)" font-size="11">${esc(pts[0].minute.slice(5,16))}</text>
+        <text x="${W}" y="${H-4}" text-anchor="end" fill="var(--ink-muted)" font-size="11">${esc(pts[pts.length-1].minute.slice(5,16))} · peak ${fmt(max)}/min</text></svg>`;
+    } else {
+      $("#rate").innerHTML = `<p class="note-inline">no rows in the ingest-rate view yet</p>`;
+    }
+
+    $("#schemas").innerHTML = d.schemas.length ? `<table><thead><tr>
+        <th>fingerprint</th><th>fields</th><th>compatible</th><th>unmapped</th></tr></thead><tbody>` +
+      d.schemas.map(s => `<tr style="cursor:default">
+        <td><code>${esc(s.fingerprint)}</code></td><td>${s.fields}</td>
+        <td style="color:${s.compatible ? "var(--good)" : "var(--crit)"}">${s.compatible ? "yes" : "NO"}</td>
+        <td class="dim" style="white-space:normal;text-align:left">${esc(s.unmapped || "—")}</td>
+      </tr>`).join("") + `</tbody></table>`
+      : `<p class="note-inline">no producer schemas registered yet</p>`;
+
+    $("#dlq").innerHTML = d.dlq.length ? `<table><thead><tr>
+        <th>reason</th><th>records</th></tr></thead><tbody>` +
+      d.dlq.map(r => `<tr style="cursor:default"><td>${esc(r.reason)}</td>
+        <td>${fmt(r.count)}</td></tr>`).join("") + `</tbody></table>`
+      : `<p class="note-inline">DLQ empty</p>`;
+
+    const comps = [
+      ["Kafka / Redpanda", !d.errors.kafka, d.kafka ? d.kafka.broker : d.errors.kafka],
+      ["Redis", !d.errors.redis, d.redis ? d.redis.memory + " used" : d.errors.redis],
+      ["ClickHouse Cloud", !d.errors.clickhouse,
+        d.clickhouse ? fmt(d.clickhouse.raw_events) + " rows in raw_events" : d.errors.clickhouse],
+      ["Schema registry", !d.errors.schemas, d.schemas.length + " schemas seen"],
+    ];
+    $("#health").innerHTML = comps.map(([n, ok, det]) =>
+      `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;
+        border-bottom:1px solid var(--grid)">
+        <span style="width:9px;height:9px;border-radius:50%;flex:none;
+          background:${ok ? "var(--good)" : "var(--crit)"}"></span>
+        <b style="min-width:190px">${esc(n)}</b>
+        <span class="meta">${esc(String(det || ""))}</span></div>`).join("") +
+      `<p class="note-inline">polling every 5 s · last response ${fmt1(d.latency_ms)} ms</p>`;
+    perf({latency_ms: d.latency_ms, rows_read: 0});
+  }
+  await tick();
+  stopLive();
+  _liveTimer = setInterval(tick, 5000);
+}
+
+/* ---------------------------------------------------------------------
+   Architecture. The diagram distinguishes what RUNS from what is DESIGNED.
+   A node drawn as running that isn't survives exactly one question.
+   --------------------------------------------------------------------- */
+const ARCH = `flowchart LR
+  subgraph PROD["Producers"]
+    APP["SonyLIV clients<br/>player + app events"]
+  end
+  subgraph INGEST["Ingestion"]
+    K["Kafka / Redpanda<br/>6 partitions<br/>keyed by session"]
+    SR["Schema Registry"]
+  end
+  subgraph PROC["Stream processing"]
+    V["Validator<br/>required-column contract<br/>type coercion"]
+    D["Dedup<br/>Redis SETNX<br/>fingerprint + TTL"]
+    DLQ["DLQ<br/>topic + ClickHouse<br/>reason attached"]
+  end
+  subgraph STATE["Mutable state"]
+    R["Redis<br/>open sessions<br/>content cache"]
+  end
+  subgraph CH["ClickHouse Cloud"]
+    RAW["raw_events<br/>ORDER BY session, ts"]
+    MV["Materialized views<br/>incremental derive"]
+    IV["session_active_intervals"]
+    DL["concurrency_minute_delta"]
+    CP["hourly_checkpoint"]
+  end
+  subgraph SERVE["Serving"]
+    API["Dashboard API"]
+    UI["6 dashboards"]
+    MCP["MCP server"]
+  end
+  OBS["ClickStack<br/>OTel traces"]
+
+  APP --> K
+  SR -.governs.-> K
+  K --> V --> D --> RAW
+  V -- rejected --> DLQ
+  D <--> R
+  RAW --> MV --> IV --> DL --> CP
+  DL --> API
+  CP --> API
+  R --> API
+  API --> UI
+  API --> MCP
+  RAW -.traced.-> OBS
+  API -.traced.-> OBS
+
+  classDef built fill:#2a78d6,stroke:#1c5cab,color:#fff;
+  classDef designed fill:#f0efec,stroke:#898781,color:#52514e,stroke-dasharray:4 3;
+  class APP,K,V,D,DLQ,R,RAW,IV,DL,CP,API,UI,MCP,OBS built;
+  class SR,MV designed;`;
+
+const COMPONENTS = [
+  ["Kafka / Redpanda", "built", "Durable, replayable ingestion. Keyed by video_session_id so a session never splits across partitions — session reconstruction is order-dependent per key."],
+  ["Stream processor", "built", "Event-time normalisation, seconds-vs-millis coercion, dedup and session state. 2,028 events/s measured end-to-end on one consumer."],
+  ["Redis", "built", "Mutable state ClickHouse is bad at: the idempotency set (38,372 fingerprints) and open-session cache. 6.07 MB resident."],
+  ["DLQ", "built", "Malformed events isolated with their parse reason and payload, in both a Kafka topic and a ClickHouse table. The pipeline never stops for a bad record."],
+  ["ClickHouse", "built", "Landing + serving. Delta model stores 2 rows per interval regardless of duration, against one row per active minute for a grid."],
+  ["Serving tables", "built", "concurrency_minute_delta + hourly checkpoints, so a range query costs the range and not the retention."],
+  ["ClickStack", "built", "OTel traces on every statement. Query latency and rows-read per span."],
+  ["Materialized views", "designed", "Derivation currently runs as an explicit step, which is what the oracle-parity gate checks. Moving it to MVs makes it incremental on insert — the same SQL, triggered differently."],
+  ["Schema Registry", "designed", "The loader's ALIASES table plus the required-column contract is a registry in miniature: it version-tolerates producer field names and refuses to default a required column. A real registry moves that contract upstream of the producer."],
+];
+
+let _mermaidReady = false;
+function loadMermaid() {
+  if (_mermaidReady) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "/vendor/mermaid.min.js";
+    s.onload = () => { _mermaidReady = true; res(); };
+    s.onerror = () => rej(new Error("mermaid failed to load from /vendor"));
+    document.head.appendChild(s);
+  });
+}
+
+async function viewArchitecture(main) {
+  main.innerHTML = `<div class="grid">
+    ${card("Pipeline architecture","Solid = running now. Dashed = designed, not built — labelled so a diagram cannot overclaim.",
+      `<div id="diagram" style="overflow-x:auto"></div>`, "col-12")}
+    ${card("Why each component is there","", `<div id="components"></div>`, "col-12")}
+    ${card("Query playground","Pick one of the project's real queries or write your own. Read-only.",
+      `<div id="pg"></div>`, "col-12")}
+  </div>`;
+
+  $("#components").innerHTML = `<table><thead><tr>
+      <th>Component</th><th>Status</th><th>Why</th></tr></thead><tbody>` +
+    COMPONENTS.map(([n, st, why]) => `<tr style="cursor:default">
+      <td>${esc(n)}</td>
+      <td><span class="chip" style="border-color:${st==="built"?"var(--s1)":"var(--axis)"}">
+        ${st === "built" ? "running" : "designed"}</span></td>
+      <td class="dim" style="text-align:left;white-space:normal">${esc(why)}</td>
+    </tr>`).join("") + `</tbody></table>`;
+
+  try {
+    await loadMermaid();
+    const dark = getComputedStyle(document.documentElement)
+      .getPropertyValue("--surface-1").trim().startsWith("#1");
+    mermaid.initialize({startOnLoad:false, theme: dark ? "dark" : "default",
+                        flowchart:{curve:"basis", htmlLabels:true}});
+    const {svg} = await mermaid.render("archdiagram", ARCH);
+    $("#diagram").innerHTML = svg;
+  } catch (e) {
+    $("#diagram").innerHTML = `<p class="err">diagram unavailable: ${esc(e.message)}</p>
+      <pre class="note-inline" style="white-space:pre-wrap">${esc(ARCH)}</pre>`;
+  }
+
+  await renderPlayground($("#pg"));
+}
+
+async function renderPlayground(host) {
+  const cat = await (await fetch("/api/catalog")).json();
+  host.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <select id="pg-pick" style="background:var(--surface-1);border:1px solid var(--hair);
+        border-radius:8px;padding:7px 9px;max-width:100%">
+        <option value="">— pick a query from the project —</option>
+        ${cat.queries.map(q=>`<option value="${esc(q.id)}">${esc(q.name)}</option>`).join("")}
+      </select>
+      <label class="meta">runs
+        <select id="pg-runs" style="background:var(--surface-1);border:1px solid var(--hair);
+          border-radius:8px;padding:6px 8px">
+          <option>1</option><option selected>3</option><option>5</option><option>9</option>
+        </select></label>
+      <button id="pg-run" class="ctl" style="background:var(--brand);color:var(--brand-ink);
+        border:1px solid rgba(0,0,0,.2);border-radius:8px;padding:7px 14px;font-weight:650;
+        cursor:pointer">Run</button>
+      <span class="meta" id="pg-note"></span>
+    </div>
+    <textarea id="pg-sql" spellcheck="false" rows="10" style="width:100%;
+      font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12.5px;
+      background:var(--plane);color:var(--ink-1);border:1px solid var(--hair);
+      border-radius:8px;padding:10px;resize:vertical"
+      placeholder="SELECT ... — read-only statements only"></textarea>
+    <div id="pg-metrics" style="margin-top:10px"></div>
+    <div id="pg-out" style="margin-top:10px"></div>`;
+
+  const byId = Object.fromEntries(cat.queries.map(q=>[q.id,q]));
+  $("#pg-pick").addEventListener("change", e => {
+    const q = byId[e.target.value];
+    if (!q) return;
+    $("#pg-sql").value = q.sql;
+    $("#pg-note").textContent = q.note || "";
+  });
+  $("#pg-sql").value = byId.headline.sql;
+  $("#pg-note").textContent = byId.headline.note;
+
+  async function run() {
+    const sql = $("#pg-sql").value.trim();
+    if (!sql) return;
+    $("#pg-out").innerHTML = `<p class="note-inline">running…</p>`;
+    $("#pg-metrics").innerHTML = "";
+    try {
+      const r = await (await fetch("/api/playground?" + new URLSearchParams(
+        {sql, runs: $("#pg-runs").value}))).json();
+      if (r.error) throw new Error(r.error);
+      const m = r.metrics;
+      const tiles = [
+        ["p50 latency", fmt1(m.p50_ms) + " ms", `${r.runs} run${r.runs>1?"s":""}, p95 ${fmt1(m.p95_ms)} ms`],
+        ["rows read", fmt(m.read_rows), bytes(m.read_bytes) + " read"],
+        ["result rows", fmt(m.result_rows), bytes(m.result_bytes) + " returned"],
+        ["peak memory", bytes(m.peak_memory_bytes), "server-side"],
+        ["parts / marks", (m.selected_parts??"—") + " / " + (m.selected_marks??"—"),
+         m.estimated_rows!=null ? fmt(m.estimated_rows)+" rows estimated" : "EXPLAIN ESTIMATE"],
+      ];
+      $("#pg-metrics").innerHTML = `<div class="grid">` + tiles.map(([l,v,n]) =>
+        `<div class="card tile col-3" style="padding:11px 13px">
+           <div class="label">${esc(l)}</div>
+           <div class="value" style="font-size:22px">${esc(v)}</div>
+           <div class="note">${esc(n)}</div></div>`).join("") + `</div>
+        <p class="note-inline">Not shown: ${r.unavailable.join(", ")} — these live in
+        <code>system.query_log</code>, which is per-replica on ClickHouse Cloud, so a lookup
+        lands on a node that may not have run the query. Stated rather than estimated.</p>`;
+      if (!r.columns.length) { $("#pg-out").innerHTML = `<p class="note-inline">no rows</p>`; return; }
+      $("#pg-out").innerHTML = `<div class="tablewrap"><table><thead><tr>` +
+        r.columns.map(c=>`<th style="cursor:default">${esc(c)}</th>`).join("") +
+        `</tr></thead><tbody>` + r.rows.map(row=>`<tr style="cursor:default">` +
+          row.map(v=>`<td>${esc(v)}</td>`).join("") + `</tr>`).join("") +
+        `</tbody></table></div>` + (r.truncated
+          ? `<p class="note-inline">truncated to 500 rows</p>` : "");
+    } catch (e) {
+      $("#pg-out").innerHTML = `<p class="err">${esc(e.message)}</p>`;
+    }
+  }
+  $("#pg-run").addEventListener("click", run);
+  $("#pg-sql").addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run();
+  });
+  run();
+}
+
+const bytes = n => n == null ? "—" :
+  n > 1e9 ? (n/1e9).toFixed(2)+" GB" : n > 1e6 ? (n/1e6).toFixed(1)+" MB" :
+  n > 1e3 ? (n/1e3).toFixed(1)+" kB" : n + " B";
+
+async function viewRegions(main) {
+  main.innerHTML = `<div class="grid" id="g">
+    ${card("Language regions of India","One square per state, geographically arranged.",
+      `<div id="map"></div>`, "col-6")}
+    ${card("Audio language mix","Normalised: hin / HIN / hin-hindi are one language.",
+      `<div id="lang"></div>`, "col-6")}
+    ${card("Why there is no real map here","", `<div id="why"></div>`, "col-12")}
+  </div>`;
+  const l = await api("/api/language");
+  chartTileMap($("#map"), l.rows);
+  chartBars($("#lang"), l.rows.map(r=>({...r})), "sessions", null, "--s1");
+  const notStated = (l.rows.find(r=>r.value==="Not stated")||{}).sessions || 0;
+  const english = (l.rows.find(r=>r.value==="English")||{}).sessions || 0;
+  const T = l.total_sessions;
+  $("#why").innerHTML = `<p class="note-inline">
+    Every one of the ${fmt(OV.events)} events carries <code>country = india</code>, and there is
+    no state, city, region, ISP or CDN column anywhere in the dataset — a true choropleth would
+    have exactly one shape on it. So region here is inferred from <code>audio_language</code>,
+    the only column carrying any regional signal.
+    <br><br>
+    That signal is stronger than it first appears, but it took care to extract. Taking each
+    session's first <em>stated</em> language — rather than its first value, which is usually
+    <code>unk</code> before the audio track resolves — leaves only <b>${fmt(notStated)}</b>
+    sessions (${(notStated/T*100).toFixed(1)}%) with no language at all. Each session is
+    attributed exactly once, so the buckets sum to ${fmt(T)}.
+    <br><br>
+    Two honest limits remain. <b>${fmt(english)}</b> English sessions
+    (${(english/T*100).toFixed(1)}%) belong to no region and are not placed. And every
+    Hindi-belt state carries the same figure, because this is a language map drawn on a state
+    grid — not per-state data, which the dataset does not contain.</p>`;
+  perf(l);
+}
+
+const VIEWS = {overview:viewOverview, ops:viewOps, analyst:viewAnalyst,
+               product:viewProduct, regions:viewRegions, pipeline:viewPipeline,
+               live:viewLive, arch:viewArchitecture};
+
+function perf(r) {
+  if (!r) return;
+  $("#hdr-perf").innerHTML = `<b>${fmt1(r.latency_ms)} ms</b> · ${fmt(r.rows_read)} rows read`;
+}
+
+/* --- orchestration ------------------------------------------------------ */
+function renderNav() {
+  for (const [grp, host] of [["Analytics", "#nav-main"], ["Platform", "#nav-plat"]]) {
+    $(host).innerHTML = TABS.filter(t => t.grp === grp).map(t =>
+      `<button data-t="${t.id}" ${t.id === state.tab ? 'aria-current="page"' : ""}>
+         <span>${esc(t.name)}</span></button>`).join("");
+    $(host).querySelectorAll("button").forEach(b =>
+      b.addEventListener("click", () => go(b.dataset.t)));
+  }
+  const t = TABS.find(x => x.id === state.tab) || TABS[0];
+  $("#page-title").textContent = t.name;
+  $("#page-desc").textContent = t.desc;
+}
+
+function go(id) {
+  if (id === state.tab) return;
+  state.tab = id; location.hash = id;
+  renderNav(); refresh();
+  window.scrollTo({top: 0, behavior: "smooth"});
+}
+
+/* Every step ends by pointing at the next question, so the reader is carried
+   through the argument instead of being left at the bottom of a page. */
+function storyFooter() {
+  const i = TABS.findIndex(t => t.id === state.tab);
+  const prev = TABS[i - 1], next = TABS[i + 1];
+  if (!prev && !next) return "";
+  return `<div class="storynav col-12">
+    ${prev ? `<button class="sn prev" data-go="${prev.id}">← ${esc(prev.name)}</button>` : `<span></span>`}
+    ${next ? `<button class="sn next" data-go="${next.id}">${esc(next.name)} →</button>` : `<span></span>`}
+  </div>`;
+}
+
+function wireStory(root) {
+  (root || document).querySelectorAll("[data-go]").forEach(b =>
+    b.addEventListener("click", () => go(b.dataset.go)));
+}
+
+let seq = 0;
+async function refresh() {
+  if (state.tab !== "live") stopLive();
+  renderFilters();
+  const main = $("#main");
+  main.classList.add("loading");           // hold the frame; no skeleton, no jump
+  const mine = ++seq;
+  try {
+    const f = api("/api/facets").then(r => { if (mine===seq) FACETS = r.facets; });
+    await (VIEWS[state.tab] || viewOverview)(main);
+    const g = main.querySelector(".grid");
+    if (g) g.insertAdjacentHTML("beforeend", storyFooter());
+    wireInfo(main); wireStory(main);
+    await f; if (mine===seq) renderFilters();
+  } catch (e) {
+    main.innerHTML = `<div class="card col-12"><p class="err">${esc(e.message)}</p></div>`;
+  } finally { if (mine===seq) main.classList.remove("loading"); }
+}
+
+$("#refresh").addEventListener("click", () => refresh());
+$("#theme").addEventListener("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur === "dark" ? "light" : cur === "light" ? "dark"
+             : (matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark");
+  document.documentElement.setAttribute("data-theme", next);
+  refresh();
+});
+addEventListener("hashchange", () => {
+  const h = location.hash.slice(1);
+  if (h && h !== state.tab) { state.tab = h; renderNav(); refresh(); }
+});
+addEventListener("resize", () => { clearTimeout(window._rz);
+  window._rz = setTimeout(refresh, 220); });
+
+(async function init() {
+  OV = await (await fetch("/api/overview")).json();
+  DIMS = (OV.dims || []).filter(d => d !== "country")   // one value; never narrows
+          .map(k => ({key: k, label: DIM_LABEL[k] || k}));
+  for (const d of DIMS) if (!state.sel[d.key]) state.sel[d.key] = [];
+  $("#foot-host").textContent = OV.endpoint;
+  $("#foot-ver").textContent =
+    `ClickHouse ${OV.server} · ${fmt(OV.events)} events · ${fmt(OV.sessions)} sessions`;
+  applyPreset(state.preset);
+  renderNav();
+  await refresh();
+})();
+</script>

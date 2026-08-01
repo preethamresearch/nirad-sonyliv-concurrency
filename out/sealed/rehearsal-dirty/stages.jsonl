@@ -1,0 +1,10 @@
+{"stage": "connect", "at_s": 0.204, "host": "s9vfs5b226.ap-south-1.aws.clickhouse.cloud", "secure": true, "server": "26.2.1.525"}
+{"stage": "input", "at_s": 3.338, "raw": "sealed_rehearsal.csv", "raw_bytes": 228969061, "raw_sha256": "3282603ee0ef4fd2", "git": "514259a63246", "dirty": true}
+{"stage": "schema", "at_s": 5.021, "seconds": 1.68}
+{"stage": "truncate", "at_s": 6.301, "tables": 4}
+{"stage": "schema_match", "at_s": 144.646, "columns_matched": 12, "unrecognised": ["cdn_pop", "ab_bucket"], "missing_defaulted": ["subtitle_language"], "staged_rows": 924596}
+{"stage": "load_raw", "at_s": 144.833, "rows": 924596, "seconds": 138.34, "rows_per_sec": 6683, "ingest_lag_seconds": -157137638.0}
+{"stage": "data_profile", "at_s": 146.343, "sessions": 13583, "users": 9619, "range": "1938-04-25 17:58:26.092 .. 2031-07-25 11:29:57.780", "open_sessions": 2717, "dict_misses": 13372, "unknown_event_types": "none"}
+{"stage": "derive_intervals", "at_s": 149.414, "rows": 35431, "open_intervals": 0, "active_hours": 1810.47, "watermark_ms": 1942745397780, "seconds": 2.91}
+{"stage": "build_serving", "at_s": 153.58, "delta_rows": 33761, "checkpoint_rows": 2010, "minute_grid_rows_avoided": 143903, "seconds": 4.16}
+{"stage": "naive_baseline", "at_s": 153.797, "peak": 8735}
