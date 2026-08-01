@@ -736,8 +736,9 @@ ORDER BY p.modification_time DESC LIMIT 40""",
         "dlq": "SELECT reason, count() AS n, max(toString(ingested_at)) AS last_seen "
                "FROM sony.stream_dlq GROUP BY reason ORDER BY n DESC LIMIT 10",
         # most recent dead letters, as log lines
-        "dlqlog": "SELECT toString(ingested_at), reason, detail, substring(payload,1,120) "
-                  "FROM sony.stream_dlq ORDER BY ingested_at DESC LIMIT 25",
+        "dlqlog": "SELECT toString(ingested_at), reason, detail, topic, "
+                  "toString(partition), toString(offset), payload "
+                  "FROM sony.stream_dlq ORDER BY ingested_at DESC LIMIT 40",
         # pipeline runs, as log lines
         "runs": "SELECT toString(started_at), run_id, toString(events), "
                 "toString(intervals), toString(oracle_match), status, "
@@ -821,15 +822,50 @@ FROM sony.raw_events""",
     logs = []
     for at, rid, nraw, niv, ok, status, peak, dirty in rows_of("runs"):
         matched = ok in ("1", "true")
-        logs.append({"at": at, "level": "info" if matched else "error",
-                     "src": "pipeline",
-                     "msg": f"{rid} · {status} · {int(nraw or 0):,} events · "
-                            f"{int(niv or 0):,} intervals · peak {int(peak or 0):,} · "
-                            f"oracle {'match' if matched else 'MISMATCH'}"
-                            + ("" if dirty in ("0", "false") else " · working tree dirty")})
-    for at, reason, detail, payload in rows_of("dlqlog"):
-        logs.append({"at": at, "level": "warn", "src": "dlq",
-                     "msg": f"{reason} · {detail} · {payload[:80]}"})
+        logs.append({
+            "at": at, "level": "info" if matched else "error",
+            "src": "pipeline", "event": status or "run",
+            "summary": rid,
+            "where": "",
+            "fields": {
+                "events": f"{int(nraw or 0):,}",
+                "intervals": f"{int(niv or 0):,}",
+                "peak_concurrency": f"{int(peak or 0):,}",
+                "oracle": "match" if matched else "MISMATCH",
+                "working_tree": "clean" if dirty in ("0", "false") else "dirty",
+            },
+            "raw": json.dumps({
+                "run_id": rid, "status": status, "events": int(nraw or 0),
+                "intervals": int(niv or 0), "peak_concurrency": int(peak or 0),
+                "oracle_match": matched, "git_dirty": dirty not in ("0", "false"),
+                "started_at": at,
+            }, indent=2, sort_keys=True),
+        })
+    for row in rows_of("dlqlog"):
+        at, reason, detail, topic, part, off, payload = (row + [""] * 7)[:7]
+        # The payload is a record, not a log message. It belongs in a detail
+        # pane the reader can open, not concatenated into a line that then
+        # gets truncated -- which makes it useless in both places.
+        # Keep the WHOLE record. A log viewer that truncates to the fields we
+        # thought of is useless exactly when the record has a field we did not
+        # expect -- which is the case a dead letter exists to surface.
+        fields, raw = {}, payload
+        try:
+            parsed = json.loads(payload) if payload.strip().startswith("{") else None
+            if isinstance(parsed, dict):
+                fields = {k: str(v)[:200] for k, v in parsed.items()}
+                raw = json.dumps(parsed, indent=2, sort_keys=True)
+        except Exception:
+            pass
+        logs.append({
+            "at": at, "level": "warn", "src": "dlq",
+            "event": reason,
+            "summary": detail or reason,
+            "where": f"{topic}[{part}]@{off}" if topic else "",
+            "fields": fields,
+            "raw": raw[:4000],
+        })
+
     logs.sort(key=lambda r: r["at"], reverse=True)
 
     return {"lanes": lanes, "batches": batches, "alerts": alerts,

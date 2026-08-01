@@ -389,6 +389,56 @@ tbody tr:hover .rowfilter, .rowfilter.on { opacity: 1; }
   background: color-mix(in srgb, var(--focus) 10%, var(--surface)); }
 tbody tr.rowon { background: color-mix(in srgb, var(--focus) 7%, transparent); }
 
+
+/* --- log viewer ----------------------------------------------------------- */
+.logs { max-height: 360px; overflow: auto; font-size: var(--t-sm); }
+.logrow { border-bottom: 1px solid var(--line-2); }
+.logrow:last-child { border-bottom: 0; }
+.lhead { display: grid; align-items: baseline; gap: 10px; padding: 5px 4px;
+  grid-template-columns: 132px 46px 62px 92px 1fr auto auto; }
+.logrow:hover .lhead { background: var(--surface-2); }
+.lhead .ts { color: var(--ink-3); font-family: ui-monospace, monospace; font-size: 11px; }
+.lhead .lvl { font-weight: 700; font-size: var(--t-micro); letter-spacing: .05em; }
+.logrow.info  .lvl { color: var(--s1); }
+.logrow.warn  .lvl { color: var(--warn); }
+.logrow.error .lvl { color: var(--crit); }
+.lhead .src { color: var(--ink-3); font-size: var(--t-cap); }
+.lhead .evt { font-weight: 600; color: var(--ink-1); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.lhead .sum { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.lhead .where { color: var(--ink-3); font-family: ui-monospace, monospace;
+  font-size: 10.5px; white-space: nowrap; }
+.lhead .chev { color: var(--ink-3); transition: transform .12s; }
+.logrow.open .lhead .chev { transform: rotate(90deg); display: inline-block; }
+.ldetail { padding: 4px 4px 10px 132px; background: var(--surface-2); }
+table.kv { width: auto; border-collapse: collapse; }
+table.kv td { border: 0; padding: 2px 14px 2px 0; text-align: left; white-space: normal; }
+table.kv td.k { color: var(--ink-3); font-family: ui-monospace, monospace;
+  font-size: 11px; vertical-align: top; }
+table.kv td.v { color: var(--ink-1); font-family: ui-monospace, monospace;
+  font-size: 11px; word-break: break-all; }
+
+
+.lhead { display: grid; align-items: baseline; gap: 10px; padding: 5px 6px;
+  grid-template-columns: 12px 132px 46px 58px 92px 1fr auto auto; cursor: pointer; }
+.lhead .nf { color: var(--ink-3); font-size: var(--t-micro); white-space: nowrap; }
+.codehead { display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; background: var(--surface); border: 1px solid var(--line);
+  border-bottom: 0; border-radius: var(--r-sm) var(--r-sm) 0 0;
+  font-size: var(--t-micro); letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-3); }
+.copybtn { background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 2px 9px; font-size: var(--t-cap);
+  color: var(--ink-2); cursor: pointer; text-transform: none; letter-spacing: 0; }
+.copybtn:hover { border-color: var(--focus); color: var(--focus); }
+pre.code { margin: 0 0 10px; padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 0 0 var(--r-sm) var(--r-sm);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px;
+  line-height: 1.55; color: var(--ink-2); max-height: 320px; overflow: auto;
+  white-space: pre; }
+.ldetail { padding: 8px 6px 4px 24px; }
+
 /* --- states -------------------------------------------------------------- */
 .skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
   var(--line-2) 63%); background-size: 400% 100%;
@@ -1299,46 +1349,58 @@ function countUp(el, to, fmtFn) {
    looks identical whether the pipeline is healthy or dead is worse than none.
    ========================================================================= */
 function chartLanes(host, lanes, endpoint) {
-  const W = 980, laneH = 34, top = 16;
-  const H = top + lanes.length * laneH + 16;
-  const x0 = 210, x1 = W - 250;
+  // Explicit column geometry. The previous version right-anchored the lane
+  // labels into the space the source box already occupied, and gave the
+  // animated dots no initial cx -- so they defaulted to x=0 and sat in a
+  // stack outside the diagram until their animation began.
+  const SRC_X = 8,  SRC_W = 132;          // source box
+  const LBL_X = SRC_X + SRC_W + 18;       // labels start here, left-aligned
+  const LBL_W = 132;
+  const LANE_X = LBL_X + LBL_W + 14;      // lane track
+  const LANE_W = 430;
+  const VAL_X = LANE_X + LANE_W + 18;     // counts
+  const W = VAL_X + 190, laneH = 40, top = 14;
+  const H = top + lanes.length * laneH + 10;
   const maxRows = Math.max(1, ...lanes.map(l => l.rows));
 
   const wires = lanes.map((l, i) => {
     const y = top + i * laneH + laneH / 2;
     const frac = l.rows / maxRows;
-    const dur = l.rows <= 0 ? 0 : Math.max(1.1, 4.2 - frac * 3.0);
+    const dur = l.rows <= 0 ? 0 : Math.max(1.2, 4.2 - frac * 3.0);
     const dots = l.rows <= 0 ? "" : Array.from({length: 4}, (_, k) =>
-      '<circle r="3.4" fill="var(--s1)"><animate attributeName="cx" from="' + x0 +
-      '" to="' + x1 + '" dur="' + dur + 's" repeatCount="indefinite" begin="' +
-      (dur / 4 * k).toFixed(2) + 's"/><animate attributeName="cy" from="' + y +
-      '" to="' + y + '" dur="' + dur + 's" repeatCount="indefinite"/></circle>').join("");
+      '<circle cx="' + LANE_X + '" cy="' + y + '" r="3.4" fill="var(--s1)">' +
+        '<animate attributeName="cx" from="' + LANE_X + '" to="' + (LANE_X + LANE_W) +
+        '" dur="' + dur + 's" repeatCount="indefinite" begin="' +
+        (dur / 4 * k).toFixed(2) + 's"/></circle>').join("");
     return '<g>' +
-      '<rect x="' + x0 + '" y="' + (y - 7) + '" width="' + (x1 - x0) + '" height="14" rx="7" ' +
-        'fill="var(--surface-2)" stroke="var(--line)"/>' +
-      '<text x="' + (x0 - 12) + '" y="' + (y + 4) + '" text-anchor="end" font-size="12" ' +
+      '<text x="' + LBL_X + '" y="' + (y + 4) + '" font-size="12" ' +
         'font-family="ui-monospace,monospace" fill="var(--ink-2)">' + esc(l.label) + '</text>' +
+      '<rect x="' + LANE_X + '" y="' + (y - 7) + '" width="' + LANE_W + '" height="14" rx="7" ' +
+        'fill="var(--surface-2)" stroke="var(--line)"/>' +
       dots +
-      '<text x="' + (x1 + 14) + '" y="' + (y + 4) + '" font-size="12" ' +
-        'font-variant-numeric="tabular-nums" fill="var(--ink-1)" font-weight="620">' +
+      '<text x="' + VAL_X + '" y="' + (y - 1) + '" font-size="12.5" ' +
+        'font-variant-numeric="tabular-nums" fill="var(--ink-1)" font-weight="640">' +
         fmt(l.rows) + '</text>' +
-      '<text x="' + (x1 + 14) + '" y="' + (y + 16) + '" font-size="9.5" ' +
+      '<text x="' + VAL_X + '" y="' + (y + 13) + '" font-size="10" ' +
         'fill="var(--ink-3)">' + esc(l.size) + ' · ' + l.parts + ' parts</text>' +
     '</g>';
   }).join("");
 
+  const boxH = lanes.length * laneH - 14;
+  const boxY = top + 7;
   host.innerHTML =
-    '<svg viewBox="0 0 ' + W + ' ' + H + '">' +
-      '<g><rect x="8" y="' + (top + 6) + '" width="150" height="' +
-        (lanes.length * laneH - 12) + '" rx="9" fill="var(--surface-2)" stroke="var(--line)"/>' +
-      '<text x="83" y="' + (top + laneH) + '" text-anchor="middle" font-size="12" ' +
-        'font-weight="640" fill="var(--ink-1)">Event stream</text>' +
-      '<text x="83" y="' + (top + laneH + 15) + '" text-anchor="middle" font-size="10" ' +
-        'fill="var(--ink-3)">Kafka · 6 partitions</text></g>' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet">' +
+      '<rect x="' + SRC_X + '" y="' + boxY + '" width="' + SRC_W + '" height="' + boxH +
+        '" rx="9" fill="var(--surface-2)" stroke="var(--line)"/>' +
+      '<text x="' + (SRC_X + SRC_W / 2) + '" y="' + (boxY + boxH / 2 - 2) +
+        '" text-anchor="middle" font-size="12" font-weight="640" ' +
+        'fill="var(--ink-1)">Event stream</text>' +
+      '<text x="' + (SRC_X + SRC_W / 2) + '" y="' + (boxY + boxH / 2 + 14) +
+        '" text-anchor="middle" font-size="10" fill="var(--ink-3)">Kafka · 6 partitions</text>' +
       wires +
     '</svg>' +
     '<p class="note-inline">Each lane is a real stage; dot rate scales with rows held. ' +
-      'Destination: <code>' + esc(endpoint) + '</code></p>';
+      'Destination <code>' + esc(endpoint) + '</code></p>';
 }
 
 /* Batch bars: one bar per active part, i.e. one insert batch. */
@@ -1391,13 +1453,48 @@ function renderAlerts(host, alerts) {
 
 function renderLogs(host, logs) {
   if (!logs.length) { host.innerHTML = '<p class="empty">no log lines</p>'; return; }
-  host.innerHTML = '<div class="logs">' + logs.map(l =>
-    '<div class="logline ' + l.level + '">' +
-      '<span class="ts">' + esc(String(l.at).slice(0, 19)) + '</span>' +
-      '<span class="lvl">' + esc(l.level.toUpperCase()) + '</span>' +
-      '<span class="src">' + esc(l.src) + '</span>' +
-      '<span class="msg">' + esc(l.msg) + '</span>' +
+  // Structured header, full record behind an accordion as indented JSON with
+  // a copy control. A dead letter exists precisely because the record had
+  // something unexpected in it, so the viewer must not assume a field list.
+  host.innerHTML = '<div class="logs">' + logs.map((l, i) =>
+    '<div class="logrow ' + l.level + '" data-i="' + i + '">' +
+      '<div class="lhead">' +
+        '<span class="chev">›</span>' +
+        '<span class="ts">' + esc(String(l.at).slice(0, 19)) + '</span>' +
+        '<span class="lvl">' + esc(l.level.toUpperCase()) + '</span>' +
+        '<span class="src">' + esc(l.src) + '</span>' +
+        '<span class="evt">' + esc(l.event || "") + '</span>' +
+        '<span class="sum">' + esc(l.summary || "") + '</span>' +
+        (l.where ? '<span class="where">' + esc(l.where) + '</span>' : "<span></span>") +
+        '<span class="nf">' + Object.keys(l.fields || {}).length + ' fields</span>' +
+      '</div>' +
+      '<div class="ldetail" hidden>' +
+        '<div class="codehead"><span>record</span>' +
+          '<button class="copybtn" data-i="' + i + '">Copy JSON</button></div>' +
+        '<pre class="code">' + esc(l.raw || "{}") + '</pre>' +
+      '</div>' +
     '</div>').join("") + '</div>';
+
+  host.querySelectorAll(".logrow").forEach(row => {
+    const det = row.querySelector(".ldetail");
+    row.querySelector(".lhead").addEventListener("click", () => {
+      det.hidden = !det.hidden;
+      row.classList.toggle("open", !det.hidden);
+    });
+  });
+  host.querySelectorAll(".copybtn").forEach(b =>
+    b.addEventListener("click", async e => {
+      e.stopPropagation();
+      const txt = logs[+b.dataset.i].raw || "";
+      try { await navigator.clipboard.writeText(txt); }
+      catch (_) {
+        const ta = document.createElement("textarea");
+        ta.value = txt; document.body.appendChild(ta); ta.select();
+        try { document.execCommand("copy"); } finally { ta.remove(); }
+      }
+      const was = b.textContent; b.textContent = "Copied";
+      setTimeout(() => { b.textContent = was; }, 1200);
+    }));
 }
 
 let _imTimer = null;
