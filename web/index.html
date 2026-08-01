@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161616'/%3E%3Crect x='6' y='17' width='4' height='9' rx='1.5' fill='%23faff69'/%3E%3Crect x='12.5' y='11' width='4' height='15' rx='1.5' fill='%23faff69'/%3E%3Crect x='19' y='6' width='4' height='20' rx='1.5' fill='%232a78d6'/%3E%3C/svg%3E">
 <title>Foreground-only concurrency · SonyLIV · Team Nirad</title>
 <style>
 :root {
@@ -118,7 +119,13 @@ footer{border-top:1px solid var(--line);color:var(--ink-3);font-size:13px;paddin
 <body>
 
 <div class="top"><div class="wrap">
-  <span class="logo"><span class="mark"></span>Team Nirad</span>
+  <a class="logo" href="/" style="text-decoration:none">
+    <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#1d1f22"/>
+      <rect x="6" y="17" width="4" height="9" rx="1.5" fill="#faff69"/>
+      <rect x="12.5" y="11" width="4" height="15" rx="1.5" fill="#faff69"/>
+      <rect x="19" y="6" width="4" height="20" rx="1.5" fill="#3987e5"/>
+    </svg>Nirad</a>
   <span class="muted">SonyLIV · Click-a-thon 2026</span>
   <span class="grow"></span>
   <a href="/app">Dashboards</a>
@@ -136,8 +143,8 @@ footer{border-top:1px solid var(--line);color:var(--ink-3);font-size:13px;paddin
       players, backgrounded apps and clients that silently went away.
       <b>On this dataset that is 653 viewers at peak who were not watching.</b>
     </p>
-    <a class="cta" href="/app">Open the dashboards →</a>
-    <a class="cta ghost" href="#failures">What went wrong</a>
+    <a class="cta" href="/app#overview">Get started →</a>
+    <a class="cta ghost" href="/app#liveops">Live Operations</a><a class="cta ghost" href="#failures">Engineering log</a>
 
     <div class="gapfig">
       <svg viewBox="0 0 900 190" id="gapchart" aria-label="naive versus foreground-only concurrency"></svg>

@@ -1,5 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161616'/%3E%3Crect x='6' y='17' width='4' height='9' rx='1.5' fill='%23faff69'/%3E%3Crect x='12.5' y='11' width='4' height='15' rx='1.5' fill='%23faff69'/%3E%3Crect x='19' y='6' width='4' height='20' rx='1.5' fill='%232a78d6'/%3E%3C/svg%3E">
 <title>Concurrency Analytics · SonyLIV · Team Nirad</title>
 <style>
 /* ===========================================================================
@@ -28,8 +29,8 @@
   --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
   --brand: #faff69; --brand-ink: #161616;
   /* type scale */
-  --t-micro: 10.5px; --t-cap: 11.5px; --t-sm: 12.5px; --t-base: 13.5px;
-  --t-lg: 15px; --t-xl: 19px; --t-num: 27px; --t-hero: 34px;
+  --t-micro: 11px; --t-cap: 12px; --t-sm: 13px; --t-base: 14px;
+  --t-lg: 16px; --t-xl: 20px; --t-num: 28px; --t-hero: 34px;
   /* space scale */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
   --r-sm: 5px; --r: 7px; --r-lg: 10px;
@@ -85,18 +86,27 @@ code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size
 /* --- sidebar ------------------------------------------------------------- */
 .side {
   background: var(--sidebar); color: var(--ink-inv);
-  display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+  display: flex; flex-direction: column; position: sticky; top: 0;
+  height: 100vh; overflow: hidden;
 }
+/* The nav region scrolls; the brand and the footer stay pinned. Without this
+   a tall nav pushes the footer past 100vh and it is clipped off the bottom. */
+.side .scrollarea { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+.side .scrollarea::-webkit-scrollbar { width: 6px; }
+.side .scrollarea::-webkit-scrollbar-thumb { background: #33363b; border-radius: 3px; }
 .side .brand {
   display: flex; align-items: center; gap: var(--sp-2);
   padding: 0 var(--sp-4); height: var(--topbar-h); flex: none;
   border-bottom: 1px solid rgba(255,255,255,.07);
 }
-.side .brand .mark {
-  width: 15px; height: 15px; border-radius: 3px; background: var(--brand);
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); flex: none;
-}
-.side .brand b { font-size: var(--t-base); letter-spacing: -.01em; }
+.side .brand { text-decoration: none; color: inherit; }
+.side .brand:hover .wordmark b { color: var(--brand); }
+.side .logomark { width: 26px; height: 26px; flex: none; border-radius: 6px; }
+.side .wordmark { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.side .wordmark b { font-size: var(--t-base); letter-spacing: -.015em; color: #fff;
+  transition: color .12s; }
+.side .wordmark span { font-size: var(--t-micro); color: #6b7078;
+  letter-spacing: .08em; text-transform: uppercase; }
 .side .grp {
   font-size: var(--t-micro); letter-spacing: .1em; text-transform: uppercase;
   color: #6b7078; padding: var(--sp-5) var(--sp-4) var(--sp-2);
@@ -138,7 +148,7 @@ code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size
   text-transform: uppercase; letter-spacing: .06em; margin-right: 4px; }
 .sn .q { color: var(--ink-3); font-size: var(--t-cap); }
 .side .foot {
-  margin-top: auto; padding: var(--sp-3) var(--sp-4);
+  flex: none; padding: var(--sp-3) var(--sp-4);
   border-top: 1px solid rgba(255,255,255,.07);
   font-size: var(--t-micro); color: #6b7078; line-height: 1.6;
 }
@@ -391,13 +401,13 @@ tbody tr.rowon { background: color-mix(in srgb, var(--focus) 7%, transparent); }
 
 
 /* --- log viewer ----------------------------------------------------------- */
-.logs { max-height: 360px; overflow: auto; font-size: var(--t-sm); }
+.logs { max-height: 420px; overflow: auto; font-size: var(--t-sm); }
 .logrow { border-bottom: 1px solid var(--line-2); }
 .logrow:last-child { border-bottom: 0; }
 .lhead { display: grid; align-items: baseline; gap: 10px; padding: 5px 4px;
   grid-template-columns: 132px 46px 62px 92px 1fr auto auto; }
 .logrow:hover .lhead { background: var(--surface-2); }
-.lhead .ts { color: var(--ink-3); font-family: ui-monospace, monospace; font-size: 11px; }
+.lhead .ts { color: var(--ink-3); font-family: ui-monospace, monospace; font-size: 12px; }
 .lhead .lvl { font-weight: 700; font-size: var(--t-micro); letter-spacing: .05em; }
 .logrow.info  .lvl { color: var(--s1); }
 .logrow.warn  .lvl { color: var(--warn); }
@@ -432,11 +442,14 @@ table.kv td.v { color: var(--ink-1); font-family: ui-monospace, monospace;
   border-radius: var(--r-sm); padding: 2px 9px; font-size: var(--t-cap);
   color: var(--ink-2); cursor: pointer; text-transform: none; letter-spacing: 0; }
 .copybtn:hover { border-color: var(--focus); color: var(--focus); }
-pre.code { margin: 0 0 10px; padding: 10px 12px; background: var(--surface);
+pre.code { margin: 0 0 10px; padding: 12px 14px; background: var(--surface);
   border: 1px solid var(--line); border-radius: 0 0 var(--r-sm) var(--r-sm);
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px;
-  line-height: 1.55; color: var(--ink-2); max-height: 320px; overflow: auto;
-  white-space: pre; }
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px;
+  line-height: 1.6; color: var(--ink-1); max-height: 340px; overflow: auto;
+  /* pre-wrap, not pre: a long value must wrap rather than force the whole
+     card into a horizontal scroll. tab-size keeps the two-space indent even
+     if a value itself contains a tab. */
+  white-space: pre-wrap; word-break: break-word; tab-size: 2; }
 .ldetail { padding: 8px 6px 4px 24px; }
 
 
@@ -464,6 +477,54 @@ pre.code { margin: 0 0 10px; padding: 10px 12px; background: var(--surface);
 .rejrow .rbar span { display: block; height: 100%; background: var(--warn); }
 .rejrow .rval { font-variant-numeric: tabular-nums; color: var(--ink-1); font-weight: 600; }
 
+
+.pager { display: flex; align-items: center; justify-content: center; gap: var(--sp-3);
+  padding: 10px 0 2px; border-top: 1px solid var(--line-2); margin-top: 8px; }
+.pgbtn { background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 5px 14px; font-size: var(--t-sm);
+  color: var(--ink-1); cursor: pointer; font-weight: 550; }
+.pgbtn:hover:not(:disabled) { border-color: var(--focus); color: var(--focus);
+  background: color-mix(in srgb, var(--focus) 6%, var(--surface)); }
+.pgbtn:disabled { opacity: .38; cursor: default; }
+.pgnum { font-size: var(--t-sm); color: var(--ink-2); font-variant-numeric: tabular-nums;
+  min-width: 110px; text-align: center; }
+
+
+/* --- motion ---------------------------------------------------------------
+   Entrance animation is staggered so the eye lands on the stat tiles first
+   and the charts resolve after, rather than everything appearing at once.
+   All of it is disabled under prefers-reduced-motion. */
+@keyframes riseIn { from { opacity: 0; transform: translateY(6px); }
+                    to   { opacity: 1; transform: none; } }
+main .card { animation: riseIn .32s cubic-bezier(.2,.7,.3,1) both; }
+main .card:nth-child(1){animation-delay:.00s} main .card:nth-child(2){animation-delay:.03s}
+main .card:nth-child(3){animation-delay:.06s} main .card:nth-child(4){animation-delay:.09s}
+main .card:nth-child(5){animation-delay:.12s} main .card:nth-child(6){animation-delay:.15s}
+main .card:nth-child(7){animation-delay:.18s} main .card:nth-child(8){animation-delay:.21s}
+main .card:nth-child(n+9){animation-delay:.24s}
+
+/* Line charts draw themselves in; the eye follows the curve left to right,
+   which is the direction the data is read anyway. */
+@keyframes drawLine { to { stroke-dashoffset: 0; } }
+svg path.animline { stroke-dasharray: 1; stroke-dashoffset: 1;
+  animation: drawLine .85s ease-out forwards; }
+
+/* Bars grow from the baseline rather than popping in at full height. */
+@keyframes growW { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+svg g.bar rect + rect, .rejrow .rbar span {
+  transform-origin: left center; animation: growW .5s cubic-bezier(.2,.7,.3,1) both; }
+.stackbar .seg { transform-origin: left center;
+  animation: growW .55s cubic-bezier(.2,.7,.3,1) both; }
+
+/* Value tiles settle rather than snapping. */
+.tile .value { transition: color .2s; }
+
+@media (prefers-reduced-motion: reduce) {
+  main .card, svg path.animline, svg g.bar rect + rect,
+  .rejrow .rbar span, .stackbar .seg { animation: none !important; }
+  svg path.animline { stroke-dasharray: none; stroke-dashoffset: 0; }
+}
+
 /* --- states -------------------------------------------------------------- */
 .skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
   var(--line-2) 63%); background-size: 400% 100%;
@@ -471,7 +532,10 @@ pre.code { margin: 0 0 10px; padding: 10px 12px; background: var(--surface);
 @keyframes sh { 0%{background-position:100% 0} 100%{background-position:0 0} }
 .skel-line { height: 11px; margin: 7px 0; }
 .empty { padding: var(--sp-5); text-align: center; color: var(--ink-3);
-  font-size: var(--t-sm); }
+  font-size: var(--t-sm); border: 1px dashed var(--line-2);
+  border-radius: var(--r-sm); }
+.card > .body:empty { display: none; }
+.card:has(> .body:empty) { display: none; }
 .err { color: var(--crit); font-size: var(--t-sm); }
 .loading { opacity: .55; transition: opacity .15s; }
 
@@ -510,13 +574,23 @@ svg { display: block; width: 100%; overflow: visible; }
 
 <div class="app">
   <aside class="side">
-    <div class="brand"><span class="mark"></span><b>Concurrency</b></div>
-    <div class="grp">Monitor</div>
-    <nav id="nav-live"></nav>
-    <div class="grp">Metrics</div>
-    <nav id="nav-main"></nav>
-    <div class="grp">Traces</div>
-    <nav id="nav-plat"></nav>
+    <a class="brand" href="/" title="Back to overview">
+      <svg class="logomark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="#1d1f22"/>
+        <rect x="6" y="17" width="4" height="9" rx="1.5" fill="#faff69"/>
+        <rect x="12.5" y="11" width="4" height="15" rx="1.5" fill="#faff69"/>
+        <rect x="19" y="6" width="4" height="20" rx="1.5" fill="#3987e5"/>
+      </svg>
+      <span class="wordmark"><b>Nirad</b><span>Concurrency</span></span>
+    </a>
+    <div class="scrollarea">
+      <div class="grp">Monitor</div>
+      <nav id="nav-live"></nav>
+      <div class="grp">Metrics</div>
+      <nav id="nav-main"></nav>
+      <div class="grp">Traces</div>
+      <nav id="nav-plat"></nav>
+    </div>
     <div class="foot">
       <div><span class="dot"></span><span id="foot-host">connecting…</span></div>
       <div id="foot-ver"></div>
@@ -649,8 +723,10 @@ function chartConcurrency(host, d) {
   host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="concurrency over time">
     ${gl.join("")}${yl.join("")}${xl.join("")}
     <path d="${band}" fill="var(--s2)" opacity=".14"/>
-    <path d="${path(nv)}" fill="none" stroke="var(--s2)" stroke-width="2" stroke-linejoin="round"/>
-    <path d="${path(fg)}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
+    <path class="animline" pathLength="1" d="${path(nv)}" fill="none" stroke="var(--s2)"
+          stroke-width="2" stroke-linejoin="round"/>
+    <path class="animline" pathLength="1" style="animation-delay:.12s" d="${path(fg)}"
+          fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>
     <line id="cross" y1="${m.t}" y2="${m.t+ih}" stroke="var(--axis)" stroke-width="1" style="display:none"/>
     <rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/>
   </svg>`;
@@ -846,7 +922,14 @@ function renderTable(host, rows, cols, dimKey) {
           (canFilter ? '<td class="actcol"><button class="rowfilter' + (on ? " on" : "") +
             '" data-v="' + esc(String(r.value)) + '">' +
             (on ? "✓ filtered" : "filter") + '</button></td>' : "") + '</tr>';
-      }).join("") + '</tbody></table></div>';
+      }).join("") + '</tbody></table></div>' +
+    (pages > 1
+      ? '<div class="pager"><button class="pgbtn" data-d="-1"' +
+          (page === 0 ? " disabled" : "") + '>← Prev</button>' +
+        '<span class="pgnum">Page ' + (page + 1) + ' of ' + pages + '</span>' +
+        '<button class="pgbtn" data-d="1"' + (page >= pages - 1 ? " disabled" : "") +
+        '>Next →</button></div>'
+      : "");
 
   host.querySelectorAll("th[data-c]").forEach(th => th.addEventListener("click", () => {
     const c = th.dataset.c;
@@ -854,7 +937,7 @@ function renderTable(host, rows, cols, dimKey) {
     _tablePage.set(key, 0);                 // a new sort starts at the first page
     renderTable(host, rows, cols, dimKey);
   }));
-  host.querySelectorAll(".pg").forEach(b => b.addEventListener("click", () => {
+  host.querySelectorAll(".pgbtn").forEach(b => b.addEventListener("click", () => {
     if (b.disabled) return;
     _tablePage.set(key, page + (+b.dataset.d));
     renderTable(host, rows, cols, dimKey);
@@ -1555,7 +1638,14 @@ function renderLogs(host, logs) {
             '<button class="copybtn">Copy JSON</button></div>' +
           '<pre class="code">' + esc(l.raw || "{}") + '</pre>' +
         '</div></div>';
-    }).join("") : '<p class="empty">no entries at this level</p>') + '</div>';
+    }).join("") : '<p class="empty">no entries at this level</p>') + '</div>' +
+    (pages > 1
+      ? '<div class="pager"><button class="pgbtn" data-d="-1"' +
+          (_logState.page === 0 ? " disabled" : "") + '>← Newer</button>' +
+        '<span class="pgnum">Page ' + (_logState.page + 1) + ' of ' + pages + '</span>' +
+        '<button class="pgbtn" data-d="1"' +
+          (_logState.page >= pages - 1 ? " disabled" : "") + '>Older →</button></div>'
+      : "");
 
   const box = host.querySelector(".logs");
   if (box) box.scrollTop = prevScroll;
@@ -1564,10 +1654,11 @@ function renderLogs(host, logs) {
     _logState.level = b.dataset.lv; _logState.page = 0; _logState.sig = "";
     renderLogs(host, logs);
   }));
-  host.querySelectorAll(".pg").forEach(b => b.addEventListener("click", () => {
+  host.querySelectorAll(".pgbtn").forEach(b => b.addEventListener("click", () => {
     if (b.disabled) return;
     _logState.page += (+b.dataset.d); _logState.sig = "";
     renderLogs(host, logs);
+    const bx = host.querySelector(".logs"); if (bx) bx.scrollTop = 0;
   }));
   host.querySelectorAll(".logrow").forEach(row => {
     const k = row.dataset.k, det = row.querySelector(".ldetail");
@@ -1663,14 +1754,14 @@ async function viewIngest(main) {
     card("Alerts",
       "Thresholds are declared in ALERT_RULES rather than buried in a query, so they can " +
       "be argued with.",
-      '<div id="alerts">' + skeleton(2) + '</div>', "col-5") +
+      '<div id="alerts">' + skeleton(2) + '</div>', "col-6") +
     card("Rejects by reason",
       "Alerts are current state; this is what actually recurs. Every rejected record is " +
       "retained with its parse reason rather than dropped.",
-      '<div id="rejects">' + skeleton(4) + '</div>', "col-5") +
+      '<div id="rejects">' + skeleton(4) + '</div>', "col-6") +
     card("Logs",
       "Real events: pipeline runs from sony.pipeline_runs and rejects from sony.stream_dlq.",
-      '<div id="logs">' + skeleton(5) + '</div>', "col-7") +
+      '<div id="logs">' + skeleton(5) + '</div>', "col-12") +
     '</div>';
 
   async function tick() {
@@ -1810,8 +1901,10 @@ function chartIncidents(host, pts) {
     '<span class="key"><span class="swatch" style="background:var(--crit)"></span>playback errors</span>' +
     '<span class="key">peak ' + fmt(max) + '/min</span></div>' +
     '<svg viewBox="0 0 ' + W + ' ' + H + '">' +
-    '<path d="' + line('rebuffers') + '" fill="none" stroke="var(--s4)" stroke-width="1.6"/>' +
-    '<path d="' + line('errors') + '" fill="none" stroke="var(--crit)" stroke-width="2"/>' +
+    '<path class="animline" pathLength="1" d="' + line('rebuffers') +
+      '" fill="none" stroke="var(--s4)" stroke-width="1.6"/>' +
+    '<path class="animline" pathLength="1" style="animation-delay:.1s" d="' + line('errors') +
+      '" fill="none" stroke="var(--crit)" stroke-width="2"/>' +
     '<line id="xh" y1="' + m.t + '" y2="' + (m.t+ih) + '" stroke="var(--ink-3)" stroke-width="1" style="display:none"/>' +
     '<rect x="' + m.l + '" y="' + m.t + '" width="' + iw + '" height="' + ih +
     '" fill="transparent" id="ihit"/></svg>';
@@ -2156,8 +2249,15 @@ function renderResultGrid(host, r) {
     '</tr></thead><tbody>' +
       r.rows.slice(start, start + PER).map(row =>
         '<tr>' + row.map(v => '<td>' + esc(v) + '</td>').join("") + '</tr>').join("") +
-    '</tbody></table></div>';
-  host.querySelectorAll(".pg").forEach(b => b.addEventListener("click", () => {
+    '</tbody></table></div>' +
+    (pages > 1
+      ? '<div class="pager"><button class="pgbtn" data-d="-1"' +
+          (_resPage === 0 ? " disabled" : "") + '>← Prev</button>' +
+        '<span class="pgnum">Page ' + (_resPage + 1) + ' of ' + pages + '</span>' +
+        '<button class="pgbtn" data-d="1"' + (_resPage >= pages - 1 ? " disabled" : "") +
+        '>Next →</button></div>'
+      : "");
+  host.querySelectorAll(".pgbtn").forEach(b => b.addEventListener("click", () => {
     if (b.disabled) return;
     _resPage += (+b.dataset.d);
     renderResultGrid(host, r);
