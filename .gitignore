@@ -19,3 +19,8 @@ fixtures/*.csv
 # Scratch produced while restructuring the UI shell.
 web/_shell.html
 web/*.backup.html
+
+# Internal working notes and agent handover -- not submission material.
+CLAUDE.md
+docs/REMARKS.md
+scripts/_check_oracle_parallel.py
