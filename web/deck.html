@@ -120,6 +120,29 @@ li b,li strong{color:var(--ink)}
   letter-spacing:.05em}
 .title-slide .slidemark{color:#6f6f68;left:60px}
 
+
+/* Title slide: the left column fills the slide height so the comparison sits
+   at the foot rather than floating mid-slide with dead space under it. */
+.titlegrid > div:first-child{display:flex;flex-direction:column;height:100%}
+.titlegrid > div:first-child .titlecompare{margin-top:auto}
+.titleside{height:100%}
+
+/* Three equal numbers hid the relationship between them. Bars make the gap
+   the thing you see first, which is the entire argument. */
+.titlecompare{padding-top:8px}
+.tc-row{display:grid;grid-template-columns:150px 1fr 92px;align-items:center;gap:14px;
+  margin-bottom:9px}
+.tc-lab{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#8f8f88}
+.tc-bar{height:12px;background:#26282a;border-radius:6px;overflow:hidden}
+.tc-bar span{display:block;height:100%;border-radius:6px}
+.tc-num{font-size:26px;font-weight:730;letter-spacing:-.03em;text-align:right;
+  font-variant-numeric:tabular-nums;line-height:1}
+.tc-gap{display:flex;align-items:baseline;gap:12px;margin-top:16px;padding-top:14px;
+  border-top:1px solid #2b2d2f}
+.tc-gap b{font-size:38px;font-weight:750;letter-spacing:-.035em;color:var(--brand);
+  font-variant-numeric:tabular-nums;line-height:1}
+.tc-gap span{font-size:13.5px;color:#a9a9a1;line-height:1.45}
+
 /* screenshot slides */
 .shot{border:1px solid var(--hair);border-radius:8px;overflow:hidden;background:var(--plane);
   box-shadow:0 2px 10px rgba(0,0,0,.10)}
@@ -153,10 +176,21 @@ li b,li strong{color:var(--ink)}
       </div>
       <h1>An open app is not a viewer.</h1>
       <p class="sub">Foreground-only concurrency at streaming scale, computed on ClickHouse.</p>
-      <div class="titlestats">
-        <div><b>3,743</b><span>reported peak</span></div>
-        <div><b style="color:#5b9bea">3,090</b><span>actually watching</span></div>
-        <div><b style="color:#faff69">653</b><span>phantom audience</span></div>
+      <div class="titlecompare">
+        <div class="tc-row">
+          <div class="tc-lab">Reported peak</div>
+          <div class="tc-bar"><span style="width:100%;background:#eb6834"></span></div>
+          <div class="tc-num" style="color:#ff8b5c">3,743</div>
+        </div>
+        <div class="tc-row">
+          <div class="tc-lab">Actually watching</div>
+          <div class="tc-bar"><span style="width:82.6%;background:#5b9bea"></span></div>
+          <div class="tc-num" style="color:#5b9bea">3,090</div>
+        </div>
+        <div class="tc-gap">
+          <b>653</b>
+          <span>phantom audience &mdash; 17.4% of what a session-overlap model reports</span>
+        </div>
       </div>
     </div>
     <aside class="titleside">
