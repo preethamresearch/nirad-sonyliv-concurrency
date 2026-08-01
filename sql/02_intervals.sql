@@ -105,14 +105,23 @@ SELECT
             iv.4 = 4, 'evidence_gap',
             iv.4 = 5, 'open_at_watermark',
                       'unknown')           AS close_reason,
-    user_id,
-    content_id,
-    platform,
-    country,
-    app_version,
-    audio_language,
-    dictGetOrDefault('sony.content_dict', 'video_type', tuple(content_id), '') AS video_type,
-    dictGetOrDefault('sony.content_dict', 'category',   tuple(content_id), '') AS category,
+    s.user_id        AS user_id,
+    s.content_id     AS content_id,
+    s.platform       AS platform,
+    s.country        AS country,
+    s.app_version    AS app_version,
+    s.audio_language AS audio_language,
+    -- JOIN, not dictGet. A dictionary is a NODE-LOCAL cache and
+    -- SYSTEM RELOAD DICTIONARY without ON CLUSTER refreshes only the node it
+    -- runs on. On ClickHouse Cloud this derivation executed against a node
+    -- still holding the pre-load (empty) snapshot, so every one of 35,901
+    -- intervals got video_type='' and the video_type='live' benchmark query
+    -- answered 0 instead of 469 -- silently, with the dictionary reporting
+    -- LOADED with 33,464 elements the whole time. A single node locally hides
+    -- this completely. Enrichment now reads the table, which is the same data
+    -- on every node.
+    c.video_type     AS video_type,
+    c.category       AS category,
     toUInt64(now64(3)) AS version
 FROM
 (
@@ -205,5 +214,12 @@ FROM
                      arrayZip(arrayEnumerate(clipped), clipped))) AS active_ivs
     FROM sony.raw_events
     GROUP BY video_session_id
-)
-ARRAY JOIN active_ivs AS iv;
+) AS s
+ARRAY JOIN active_ivs AS iv
+-- LEFT JOIN so a content_id missing from the catalogue yields empty strings
+-- rather than dropping the interval. Losing viewers because a title is not in
+-- the dimension table would be a far worse error than an unlabelled row.
+LEFT JOIN
+(
+    SELECT content_id, video_type, category FROM sony.content_dim FINAL
+) AS c ON c.content_id = s.content_id;
