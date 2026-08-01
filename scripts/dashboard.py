@@ -692,6 +692,155 @@ GROUP BY m HAVING errors + rebuffers > 0 ORDER BY m""",
     }
 
 
+
+#: Alert rules. Thresholds are stated here rather than buried in a query so a
+#: reader can argue with them. Each returns (level, title, detail) or None.
+ALERT_RULES = [
+    ("dlq_rate",      "warn", 0.5,  "crit", 5.0),
+    ("ingest_lag_s",  "warn", 300,  "crit", 1800),
+    ("error_rate",    "warn", 1.0,  "crit", 5.0),
+    ("rebuffer_rate", "warn", 20.0, "crit", 40.0),
+]
+
+
+def ingest_monitor(args):
+    """Live ingestion picture: stage lanes, insert batches, alerts, logs.
+
+    The lanes are the REAL pipeline stages, not decoration: rows land in
+    raw_events, become session_active_intervals, and are reduced to
+    concurrency_minute_delta. Each lane's rate is measured, so the animation
+    stops when the stage stops.
+    """
+    t_start = time.time()
+    jobs = {
+        # per-stage row counts and part counts -- one row per stage
+        "stages": """
+SELECT p.table AS stage, sum(p.rows) AS rows, count() AS parts,
+       formatReadableSize(sum(p.bytes_on_disk)) AS size
+FROM system.parts AS p
+WHERE p.database = 'sony' AND p.active
+  AND p.table IN ('raw_events','session_active_intervals','concurrency_minute_delta')
+GROUP BY p.table""",
+        # recent parts = recent insert batches. Each bar in the UI is one part.
+        "batches": """
+SELECT toString(p.modification_time) AS at, p.table AS stage, p.rows AS rows,
+       p.bytes_on_disk AS bytes
+FROM system.parts AS p
+WHERE p.database = 'sony' AND p.active
+  AND p.table IN ('raw_events','session_active_intervals','concurrency_minute_delta')
+ORDER BY p.modification_time DESC LIMIT 40""",
+        # freshness of the newest event we hold
+        "lag": "SELECT round(dateDiff('second', max(event_time), now64(3,'UTC')), 1) "
+               "FROM sony.raw_events",
+        # dead letters, by reason
+        "dlq": "SELECT reason, count() AS n, max(toString(ingested_at)) AS last_seen "
+               "FROM sony.stream_dlq GROUP BY reason ORDER BY n DESC LIMIT 10",
+        # most recent dead letters, as log lines
+        "dlqlog": "SELECT toString(ingested_at), reason, detail, substring(payload,1,120) "
+                  "FROM sony.stream_dlq ORDER BY ingested_at DESC LIMIT 25",
+        # pipeline runs, as log lines
+        "runs": "SELECT toString(started_at), run_id, toString(events), "
+                "toString(intervals), toString(oracle_match), status, "
+                "toString(peak_concurrency), toString(git_dirty) "
+                "FROM sony.pipeline_runs ORDER BY started_at DESC LIMIT 12",
+        # schema drift the registry has seen
+        "schemas": "SELECT fingerprint, compatible, length(fields), "
+                   "arrayStringConcat(unmapped, ', '), arrayStringConcat(missing, ', ') "
+                   "FROM sony.schema_registry GROUP BY fingerprint, compatible, fields, "
+                   "unmapped, missing ORDER BY compatible ASC LIMIT 10",
+        # quality signals, for the alert rules
+        "qoe": """
+SELECT countIf(event_type = 'VideoError'), uniqExact(video_session_id),
+       uniqExactIf(video_session_id, event_type = 'VideoError'),
+       uniqExactIf(video_session_id, event = 'BufferStart')
+FROM sony.raw_events""",
+    }
+    res, rowcounts = parallel_queries(jobs)
+
+    def rows_of(key):
+        return [l.split(chr(9)) for l in res.get(key, "").splitlines() if l]
+
+    order = ["raw_events", "session_active_intervals", "concurrency_minute_delta"]
+    label = {"raw_events": "ingest-events",
+             "session_active_intervals": "derive-intervals",
+             "concurrency_minute_delta": "reduce-deltas"}
+    by_stage = {r[0]: r for r in rows_of("stages")}
+    lanes = []
+    for st in order:
+        r = by_stage.get(st)
+        lanes.append({"id": st, "label": label[st],
+                      "rows": int(r[1]) if r else 0,
+                      "parts": int(r[2]) if r else 0,
+                      "size": r[3] if r else "0 B"})
+
+    batches = [{"at": a, "stage": s, "rows": int(n), "bytes": int(b)}
+               for a, s, n, b in rows_of("batches")][::-1]
+
+    lag = float((res.get("lag") or "0").strip() or 0)
+    dlq = [{"reason": r[0], "count": int(r[1]), "last_seen": r[2]} for r in rows_of("dlq")]
+    dlq_total = sum(d["count"] for d in dlq)
+    q = rows_of("qoe")
+    qi = [int(x or 0) for x in q[0]] if q else [0, 1, 0, 0]
+    sessions = max(qi[1], 1)
+    error_rate = round(qi[2] / sessions * 100, 2)
+    rebuffer_rate = round(qi[3] / sessions * 100, 2)
+    total_rows = lanes[0]["rows"] or 1
+    dlq_rate = round(dlq_total / (total_rows + dlq_total) * 100, 3)
+
+    schemas = [{"fingerprint": r[0][:12], "compatible": r[1] == "1",
+                "fields": int(r[2]), "unmapped": r[3], "missing": r[4]}
+               for r in rows_of("schemas")]
+
+    # ---- alerts: evaluated from the measurements above --------------------
+    measured = {"dlq_rate": dlq_rate, "ingest_lag_s": lag,
+                "error_rate": error_rate, "rebuffer_rate": rebuffer_rate}
+    titles = {"dlq_rate": "Dead-letter rate",
+              "ingest_lag_s": "Ingest lag behind wall clock",
+              "error_rate": "Sessions hitting a playback error",
+              "rebuffer_rate": "Sessions rebuffering"}
+    units = {"dlq_rate": "%", "ingest_lag_s": "s", "error_rate": "%", "rebuffer_rate": "%"}
+    alerts = []
+    for key, warn_lvl, warn_at, crit_lvl, crit_at in ALERT_RULES:
+        v = measured.get(key, 0)
+        if v >= crit_at:
+            level, thr = "critical", crit_at
+        elif v >= warn_at:
+            level, thr = "warning", warn_at
+        else:
+            continue
+        alerts.append({"level": level, "key": key, "title": titles[key],
+                       "value": v, "unit": units[key], "threshold": thr})
+    for s in schemas:
+        if not s["compatible"]:
+            alerts.append({"level": "critical", "key": "schema",
+                           "title": "Producer schema missing a required column",
+                           "value": s["fingerprint"], "unit": "",
+                           "threshold": "contract"})
+
+    # ---- logs: real events, newest first ---------------------------------
+    logs = []
+    for at, rid, nraw, niv, ok, status, peak, dirty in rows_of("runs"):
+        matched = ok in ("1", "true")
+        logs.append({"at": at, "level": "info" if matched else "error",
+                     "src": "pipeline",
+                     "msg": f"{rid} · {status} · {int(nraw or 0):,} events · "
+                            f"{int(niv or 0):,} intervals · peak {int(peak or 0):,} · "
+                            f"oracle {'match' if matched else 'MISMATCH'}"
+                            + ("" if dirty in ("0", "false") else " · working tree dirty")})
+    for at, reason, detail, payload in rows_of("dlqlog"):
+        logs.append({"at": at, "level": "warn", "src": "dlq",
+                     "msg": f"{reason} · {detail} · {payload[:80]}"})
+    logs.sort(key=lambda r: r["at"], reverse=True)
+
+    return {"lanes": lanes, "batches": batches, "alerts": alerts,
+            "logs": logs[:60], "dlq": dlq, "dlq_total": dlq_total,
+            "schemas": schemas, "ingest_lag_s": lag,
+            "measured": measured,
+            "endpoint": ch.config()["host"],
+            "latency_ms": round((time.time() - t_start) * 1000, 1),
+            "rows_read": sum(rowcounts.values())}
+
+
 def overview():
     jobs = {
         "server":     "SELECT version()",
@@ -1002,6 +1151,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, language(args))
             if u.path == "/api/catalog":
                 return self._send(200, {"queries": CATALOG})
+            if u.path == "/api/ingest_monitor":
+                return self._send(200, ingest_monitor(args))
             if u.path == "/api/live_ops":
                 return self._send(200, live_ops(args))
             if u.path == "/api/pipeline_live":

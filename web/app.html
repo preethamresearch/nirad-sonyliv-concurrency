@@ -36,6 +36,16 @@
   --shadow: 0 1px 2px rgba(20,22,26,.05), 0 1px 1px rgba(20,22,26,.04);
   --shadow-pop: 0 8px 28px rgba(20,22,26,.14);
   --nav-w: 216px; --topbar-h: 52px; --toolbar-h: 48px;
+  /* Compatibility aliases. The shell rewrite renamed these tokens; chart code
+     still referenced the old names, and an undefined var() renders as nothing
+     -- which is why unmapped map tiles came out black on a light surface.
+     Aliasing is safer than find-and-replace across every chart. */
+  --grid: var(--line-2);
+  --axis: var(--line);
+  --hair: var(--line);
+  --ink-muted: var(--ink-3);
+  --plane: var(--bg);
+  --surface-1: var(--surface);
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -270,6 +280,34 @@ code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size
   font-size: var(--t-sm); }
 .fdone:hover { filter: brightness(.96); }
 
+
+/* --- alerts & logs -------------------------------------------------------- */
+.alert { display: flex; align-items: center; gap: var(--sp-2); padding: 8px 10px;
+  border-radius: var(--r-sm); border: 1px solid var(--line); margin-bottom: 6px;
+  font-size: var(--t-sm); background: var(--surface-2); }
+.alert.critical { border-left: 3px solid var(--crit); }
+.alert.warning  { border-left: 3px solid var(--warn); }
+.alert .lv { font-size: var(--t-micro); font-weight: 700; letter-spacing: .06em;
+  padding: 2px 6px; border-radius: 3px; color: #fff; }
+.alert.critical .lv { background: var(--crit); }
+.alert.warning  .lv { background: var(--warn); color: #3a2a00; }
+.alert .ttl { color: var(--ink-1); }
+.alert .val { margin-left: auto; font-weight: 680; font-variant-numeric: tabular-nums; }
+.alert .thr { color: var(--ink-3); font-size: var(--t-cap); white-space: nowrap; }
+.ok-state { padding: var(--sp-4); text-align: center; color: var(--good);
+  font-size: var(--t-sm); border: 1px dashed var(--line); border-radius: var(--r-sm); }
+.logs { max-height: 330px; overflow: auto; font-family: ui-monospace, SFMono-Regular,
+  Consolas, monospace; font-size: 11.5px; line-height: 1.75; }
+.logline { display: flex; gap: 10px; padding: 1px 0; white-space: nowrap; }
+.logline .ts { color: var(--ink-3); flex: none; }
+.logline .lvl { flex: none; width: 42px; font-weight: 650; }
+.logline.info  .lvl { color: var(--s1); }
+.logline.warn  .lvl { color: var(--warn); }
+.logline.error .lvl { color: var(--crit); }
+.logline .src { flex: none; width: 62px; color: var(--ink-3); }
+.logline .msg { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.logline:hover { background: var(--surface-2); }
+
 /* --- content ------------------------------------------------------------- */
 main { padding: var(--sp-5); flex: 1 1 auto; }
 .grid { display: grid; gap: var(--sp-3); grid-template-columns: repeat(12, 1fr); }
@@ -334,11 +372,22 @@ th {
   user-select: none; border-bottom: 1px solid var(--line);
 }
 th:hover { color: var(--ink-1); }
-tbody tr { cursor: pointer; }
+tbody tr { cursor: default; }
 tbody tr:hover { background: var(--surface-2); }
 tbody tr:last-child td { border-bottom: 0; }
 td.dim { color: var(--ink-3); }
 td.strong { font-weight: 620; }
+
+
+td.actcol, th.actcol { width: 1%; padding-left: 0; }
+.rowfilter { opacity: 0; transition: opacity .12s; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px;
+  font-size: var(--t-cap); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+tbody tr:hover .rowfilter, .rowfilter.on { opacity: 1; }
+.rowfilter:hover { border-color: var(--focus); color: var(--focus); }
+.rowfilter.on { border-color: var(--focus); color: var(--focus);
+  background: color-mix(in srgb, var(--focus) 10%, var(--surface)); }
+tbody tr.rowon { background: color-mix(in srgb, var(--focus) 7%, transparent); }
 
 /* --- states -------------------------------------------------------------- */
 .skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
@@ -435,6 +484,8 @@ const fmt1 = n => n == null ? "--" : n.toLocaleString(undefined,{minimumFraction
    previous step raises, and the sidebar numbers them so a first-time reader
    knows there is an order and where they are in it. */
 const TABS = [
+  {id:"ingest",   grp:"Monitor", name:"Ingestion",
+   desc:"Pipeline flow, insert batches, alerts and logs"},
   {id:"liveops",  grp:"Monitor", name:"Live Operations",
    desc:"Stream health during an event: churn, rebuffering, errors, ingest lag"},
   {id:"overview", grp:"Metrics", name:"Concurrency",
@@ -662,12 +713,8 @@ function chartTileMap(host, rows) {
   const unmapped = (byLang["Not stated"]||0) + (byLang["English"]||0) + (byLang["Other"]||0);
   host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="max-width:${W}px" role="img"
       aria-label="Indian states shaded by predominant language">${tiles}</svg>
-    <p class="note-inline"><b>This is a proxy, not observed geography.</b> Every event in the
-      dataset has <code>country = india</code> and no state, city or region field. States are
-      shaded by the session count of the language predominantly spoken there, so all ten
-      Hindi-belt states carry the same value — this is a language map drawn on a state grid,
-      not per-state data. <b>${fmt(unmapped)}</b> sessions (not stated, English, or other)
-      cannot be placed at all.</p>`;
+    <p class="note-inline">Inferred from audio language ·
+      <b>${fmt(unmapped)}</b> sessions not placeable</p>`;
   host.querySelectorAll(".tile-st").forEach(g => {
     g.addEventListener("pointermove", ev => showTip(ev.clientX, ev.clientY,
       `<div class="when">${esc(g.dataset.st)}</div>` + (g.dataset.lang
@@ -682,24 +729,39 @@ function chartTileMap(host, rows) {
 /* Sortable table -- the rows behind the curve, and the keyboard path to
    every value a tooltip shows. */
 function renderTable(host, rows, cols, dimKey) {
-  const s = state.sort;
-  const sorted = rows.slice().sort((a,b) => {
-    const x = a[s.col], y = b[s.col];
-    if (x == null) return 1; if (y == null) return -1;
-    return (typeof x === "string" ? x.localeCompare(y) : x - y) * s.dir;
+  const st = state.sort;
+  const sorted = rows.slice().sort((x, y) => {
+    const p = x[st.col], q = y[st.col];
+    if (p == null) return 1;
+    if (q == null) return -1;
+    return (typeof p === "string" ? p.localeCompare(q) : p - q) * st.dir;
   });
-  host.innerHTML = `<div class="tablewrap"><table>
-    <thead><tr>${cols.map(c=>`<th data-c="${c.k}">${esc(c.t)}${s.col===c.k?(s.dir<0?" ↓":" ↑"):""}</th>`).join("")}</tr></thead>
-    <tbody>${sorted.map(r=>`<tr data-v="${esc(String(r.value))}">${
-      cols.map(c=>`<td class="${c.dim?"dim":""}">${c.f?c.f(r[c.k],r):fmt(r[c.k])}</td>`).join("")}</tr>`).join("")}</tbody>
-  </table></div>`;
-  host.querySelectorAll("th").forEach(th => th.addEventListener("click", () => {
+  // Filtering is an explicit control, not a hidden behaviour of the whole row.
+  // A row that silently becomes a filter is undiscoverable, and it fires by
+  // accident when someone is trying to select text.
+  const canFilter = !!dimKey;
+  host.innerHTML = '<div class="tablewrap"><table><thead><tr>' +
+    cols.map(c => '<th data-c="' + c.k + '">' + esc(c.t) +
+      (st.col === c.k ? (st.dir < 0 ? " ↓" : " ↑") : "") + '</th>').join("") +
+    (canFilter ? '<th class="actcol"></th>' : "") + '</tr></thead><tbody>' +
+    sorted.map(r => {
+      const on = canFilter && (state.sel[dimKey] || []).includes(String(r.value));
+      return '<tr' + (on ? ' class="rowon"' : '') + '>' +
+        cols.map(c => '<td class="' + (c.dim ? "dim" : "") + '">' +
+          (c.f ? c.f(r[c.k], r) : fmt(r[c.k])) + '</td>').join("") +
+        (canFilter ? '<td class="actcol"><button class="rowfilter' + (on ? " on" : "") +
+          '" data-v="' + esc(String(r.value)) + '">' +
+          (on ? "✓ filtered" : "filter") + '</button></td>' : "") + '</tr>';
+    }).join("") + '</tbody></table></div>';
+  host.querySelectorAll("th[data-c]").forEach(th => th.addEventListener("click", () => {
     const c = th.dataset.c;
-    state.sort = {col:c, dir: s.col===c ? -s.dir : -1};
+    state.sort = {col: c, dir: st.col === c ? -st.dir : -1};
     renderTable(host, rows, cols, dimKey);
   }));
-  host.querySelectorAll("tbody tr").forEach(tr => tr.addEventListener("click",
-    () => toggleFilter(dimKey, tr.dataset.v)));
+  host.querySelectorAll(".rowfilter").forEach(bt =>
+    bt.addEventListener("click", e => {
+      e.stopPropagation(); toggleFilter(dimKey, bt.dataset.v);
+    }));
 }
 
 /* =======================================================================
@@ -1230,6 +1292,164 @@ function countUp(el, to, fmtFn) {
   requestAnimationFrame(step);
 }
 
+/* =========================================================================
+   Ingestion monitor: source → lanes → sink, with batch bars, alerts, logs.
+   The lanes are the real pipeline stages and the dot rate is scaled from
+   measured row counts, so a stalled stage visibly stops. An animation that
+   looks identical whether the pipeline is healthy or dead is worse than none.
+   ========================================================================= */
+function chartLanes(host, lanes, endpoint) {
+  const W = 980, laneH = 34, top = 16;
+  const H = top + lanes.length * laneH + 16;
+  const x0 = 210, x1 = W - 250;
+  const maxRows = Math.max(1, ...lanes.map(l => l.rows));
+
+  const wires = lanes.map((l, i) => {
+    const y = top + i * laneH + laneH / 2;
+    const frac = l.rows / maxRows;
+    const dur = l.rows <= 0 ? 0 : Math.max(1.1, 4.2 - frac * 3.0);
+    const dots = l.rows <= 0 ? "" : Array.from({length: 4}, (_, k) =>
+      '<circle r="3.4" fill="var(--s1)"><animate attributeName="cx" from="' + x0 +
+      '" to="' + x1 + '" dur="' + dur + 's" repeatCount="indefinite" begin="' +
+      (dur / 4 * k).toFixed(2) + 's"/><animate attributeName="cy" from="' + y +
+      '" to="' + y + '" dur="' + dur + 's" repeatCount="indefinite"/></circle>').join("");
+    return '<g>' +
+      '<rect x="' + x0 + '" y="' + (y - 7) + '" width="' + (x1 - x0) + '" height="14" rx="7" ' +
+        'fill="var(--surface-2)" stroke="var(--line)"/>' +
+      '<text x="' + (x0 - 12) + '" y="' + (y + 4) + '" text-anchor="end" font-size="12" ' +
+        'font-family="ui-monospace,monospace" fill="var(--ink-2)">' + esc(l.label) + '</text>' +
+      dots +
+      '<text x="' + (x1 + 14) + '" y="' + (y + 4) + '" font-size="12" ' +
+        'font-variant-numeric="tabular-nums" fill="var(--ink-1)" font-weight="620">' +
+        fmt(l.rows) + '</text>' +
+      '<text x="' + (x1 + 14) + '" y="' + (y + 16) + '" font-size="9.5" ' +
+        'fill="var(--ink-3)">' + esc(l.size) + ' · ' + l.parts + ' parts</text>' +
+    '</g>';
+  }).join("");
+
+  host.innerHTML =
+    '<svg viewBox="0 0 ' + W + ' ' + H + '">' +
+      '<g><rect x="8" y="' + (top + 6) + '" width="150" height="' +
+        (lanes.length * laneH - 12) + '" rx="9" fill="var(--surface-2)" stroke="var(--line)"/>' +
+      '<text x="83" y="' + (top + laneH) + '" text-anchor="middle" font-size="12" ' +
+        'font-weight="640" fill="var(--ink-1)">Event stream</text>' +
+      '<text x="83" y="' + (top + laneH + 15) + '" text-anchor="middle" font-size="10" ' +
+        'fill="var(--ink-3)">Kafka · 6 partitions</text></g>' +
+      wires +
+    '</svg>' +
+    '<p class="note-inline">Each lane is a real stage; dot rate scales with rows held. ' +
+      'Destination: <code>' + esc(endpoint) + '</code></p>';
+}
+
+/* Batch bars: one bar per active part, i.e. one insert batch. */
+function chartBatches(host, batches) {
+  if (!batches.length) { host.innerHTML = '<p class="empty">no recent batches</p>'; return; }
+  const W = host.clientWidth || 900, H = 120;
+  const max = Math.max(1, ...batches.map(b => b.rows));
+  const bw = W / batches.length;
+  const colorOf = s => s === "raw_events" ? "--s1"
+                     : s === "session_active_intervals" ? "--s3" : "--s4";
+  const bars = batches.map((b, i) => {
+    const h = Math.max(2, b.rows / max * (H - 26));
+    return '<g class="bt" data-i="' + i + '">' +
+      '<rect x="' + (i * bw + 1) + '" y="' + (H - 18 - h) + '" width="' +
+        Math.max(2, bw - 3) + '" height="' + h + '" rx="2" fill="var(' + colorOf(b.stage) + ')"/>' +
+      '<rect x="' + (i * bw) + '" y="0" width="' + bw + '" height="' + H +
+        '" fill="transparent"/></g>';
+  }).join("");
+  host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '">' + bars +
+    '<line x1="0" x2="' + W + '" y1="' + (H - 18) + '" y2="' + (H - 18) +
+    '" stroke="var(--line)"/></svg>' +
+    '<p class="note-inline">Each bar is one active part — one insert batch. ' +
+      'Tallest here is ' + fmt(max) + ' rows.</p>';
+  host.querySelectorAll(".bt").forEach(g => {
+    const b = batches[+g.dataset.i];
+    g.addEventListener("pointermove", ev => showTip(ev.clientX, ev.clientY,
+      '<div class="when">' + esc(b.at) + '</div>' +
+      '<div class="r"><span class="k" style="background:var(' + colorOf(b.stage) + ')"></span>' +
+      '<span class="v">' + fmt(b.rows) + '</span><span class="n">rows</span></div>' +
+      '<div class="r"><span class="k" style="background:transparent"></span>' +
+      '<span class="v">' + (b.bytes/1024).toFixed(0) + ' kB</span><span class="n">' +
+      esc(b.stage) + '</span></div>'));
+    g.addEventListener("pointerleave", hideTip);
+  });
+}
+
+function renderAlerts(host, alerts) {
+  if (!alerts.length) {
+    host.innerHTML = '<div class="ok-state">No alerts — every rule below threshold.</div>';
+    return;
+  }
+  host.innerHTML = alerts.map(a =>
+    '<div class="alert ' + a.level + '">' +
+      '<span class="lv">' + (a.level === "critical" ? "CRIT" : "WARN") + '</span>' +
+      '<span class="ttl">' + esc(a.title) + '</span>' +
+      '<span class="val">' + esc(String(a.value)) + esc(a.unit) + '</span>' +
+      '<span class="thr">threshold ' + esc(String(a.threshold)) + esc(a.unit) + '</span>' +
+    '</div>').join("");
+}
+
+function renderLogs(host, logs) {
+  if (!logs.length) { host.innerHTML = '<p class="empty">no log lines</p>'; return; }
+  host.innerHTML = '<div class="logs">' + logs.map(l =>
+    '<div class="logline ' + l.level + '">' +
+      '<span class="ts">' + esc(String(l.at).slice(0, 19)) + '</span>' +
+      '<span class="lvl">' + esc(l.level.toUpperCase()) + '</span>' +
+      '<span class="src">' + esc(l.src) + '</span>' +
+      '<span class="msg">' + esc(l.msg) + '</span>' +
+    '</div>').join("") + '</div>';
+}
+
+let _imTimer = null;
+function stopIngest() { if (_imTimer) { clearInterval(_imTimer); _imTimer = null; } }
+
+async function viewIngest(main) {
+  main.innerHTML = '<div class="grid" id="g">' +
+    tile("Rows held", "…", "across the three stages") +
+    tile("Active parts", "…", "insert batches on disk") +
+    tile("Dead letters", "…", "isolated, not dropped") +
+    tile("Open alerts", "…", "rules over threshold") +
+    card("Pipeline flow",
+      "Each lane is a real stage: events land, become intervals, reduce to minute deltas. " +
+      "Dot rate scales with rows held, so a stalled stage stops moving.",
+      '<div id="lanes">' + skeleton(3) + '</div>', "col-12") +
+    card("Insert batches",
+      "One bar per active part. ClickHouse merges parts in the background, so a healthy " +
+      "pipeline shows many small recent parts collapsing into fewer large ones.",
+      '<div id="batches">' + skeleton(2) + '</div>', "col-12") +
+    card("Alerts",
+      "Thresholds are declared in ALERT_RULES rather than buried in a query, so they can " +
+      "be argued with.",
+      '<div id="alerts">' + skeleton(2) + '</div>', "col-5") +
+    card("Logs",
+      "Real events: pipeline runs from sony.pipeline_runs and rejects from sony.stream_dlq.",
+      '<div id="logs">' + skeleton(5) + '</div>', "col-7") +
+    '</div>';
+
+  async function tick() {
+    let d;
+    try { d = await (await fetch("/api/ingest_monitor")).json(); }
+    catch (e) { return; }
+    if (state.tab !== "ingest") { stopIngest(); return; }
+    const g = $("#g").children;
+    countUp(g[0].querySelector(".value"), d.lanes.reduce((a, l) => a + l.rows, 0));
+    countUp(g[1].querySelector(".value"), d.lanes.reduce((a, l) => a + l.parts, 0));
+    countUp(g[2].querySelector(".value"), d.dlq_total);
+    const av = g[3].querySelector(".value");
+    av.textContent = d.alerts.length;
+    av.className = "value " + (d.alerts.some(a => a.level === "critical") ? "crit"
+                             : d.alerts.length ? "" : "good");
+    chartLanes($("#lanes"), d.lanes, d.endpoint);
+    chartBatches($("#batches"), d.batches);
+    renderAlerts($("#alerts"), d.alerts);
+    renderLogs($("#logs"), d.logs);
+    perf(d);
+  }
+  await tick();
+  stopIngest();
+  _imTimer = setInterval(tick, 6000);
+}
+
 let _liveTimer = null;
 function stopLive() { if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; } }
 
@@ -1750,41 +1970,56 @@ const bytes = n => n == null ? "—" :
   n > 1e3 ? (n/1e3).toFixed(1)+" kB" : n + " B";
 
 async function viewRegions(main) {
-  main.innerHTML = `<div class="grid" id="g">
-    ${card("Language regions of India","One square per state, geographically arranged.",
-      `<div id="map"></div>`, "col-6")}
-    ${card("Audio language mix","Normalised: hin / HIN / hin-hindi are one language.",
-      `<div id="lang"></div>`, "col-6")}
-    ${card("Why there is no real map here","", `<div id="why"></div>`, "col-12")}
-  </div>`;
+  main.innerHTML = '<div class="grid" id="g">' +
+    tile("Sessions with a language", "…", "of all sessions") +
+    tile("Regional languages", "…", "excluding Hindi and English") +
+    tile("Not stated", "…", "no audio language at all") +
+    tile("Unplaceable", "…", "English or other — no region") +
+    card("Language regions of India",
+      "Region is INFERRED from audio_language, not observed. Every event carries " +
+      "country = india and there is no state, city, region, ISP or CDN field, so a true " +
+      "choropleth would have one shape on it. All ten Hindi-belt states therefore carry " +
+      "the same figure — this is a language map drawn on a state grid, not per-state data.",
+      '<div id="map">' + skeleton(4) + '</div>', "col-6") +
+    card("Audio language mix",
+      "Normalised: hin / HIN / hin-hindi are one language. Attribution is the first " +
+      "STATED language per session — players emit unk before the audio track resolves, " +
+      "and naive attribution reports 80% unknown where the true figure is 0.5%.",
+      '<div id="lang">' + skeleton(5) + '</div>', "col-6") +
+    card("Language by platform", "Which surfaces carry which audiences.",
+      '<div id="langtbl">' + skeleton(4) + '</div>', "col-12") +
+    '</div>';
+
   const l = await api("/api/language");
+  const T = l.total_sessions || 1;
+  const by = Object.fromEntries(l.rows.map(r => [r.value, r.sessions]));
+  const REGIONAL = ["Tamil","Telugu","Malayalam","Marathi","Kannada","Bengali"];
+  const regional = REGIONAL.reduce((a, k) => a + (by[k] || 0), 0);
+  const notStated = by["Not stated"] || 0;
+  const unplaceable = (by["English"] || 0) + (by["Other"] || 0) + notStated;
+  const g = $("#g").children;
+  countUp(g[0].querySelector(".value"), T - notStated);
+  g[0].querySelector(".note").textContent = ((T - notStated) / T * 100).toFixed(1) + "% of " + fmt(T);
+  countUp(g[1].querySelector(".value"), regional);
+  g[1].querySelector(".note").textContent = (regional / T * 100).toFixed(1) + "% of sessions";
+  countUp(g[2].querySelector(".value"), notStated);
+  g[2].querySelector(".note").textContent = (notStated / T * 100).toFixed(1) + "% of sessions";
+  countUp(g[3].querySelector(".value"), unplaceable);
+  g[3].querySelector(".note").textContent = (unplaceable / T * 100).toFixed(1) + "% cannot be placed";
+
   chartTileMap($("#map"), l.rows);
-  chartBars($("#lang"), l.rows.map(r=>({...r})), "sessions", null, "--s1");
-  const notStated = (l.rows.find(r=>r.value==="Not stated")||{}).sessions || 0;
-  const english = (l.rows.find(r=>r.value==="English")||{}).sessions || 0;
-  const T = l.total_sessions;
-  $("#why").innerHTML = `<p class="note-inline">
-    Every one of the ${fmt(OV.events)} events carries <code>country = india</code>, and there is
-    no state, city, region, ISP or CDN column anywhere in the dataset — a true choropleth would
-    have exactly one shape on it. So region here is inferred from <code>audio_language</code>,
-    the only column carrying any regional signal.
-    <br><br>
-    That signal is stronger than it first appears, but it took care to extract. Taking each
-    session's first <em>stated</em> language — rather than its first value, which is usually
-    <code>unk</code> before the audio track resolves — leaves only <b>${fmt(notStated)}</b>
-    sessions (${(notStated/T*100).toFixed(1)}%) with no language at all. Each session is
-    attributed exactly once, so the buckets sum to ${fmt(T)}.
-    <br><br>
-    Two honest limits remain. <b>${fmt(english)}</b> English sessions
-    (${(english/T*100).toFixed(1)}%) belong to no region and are not placed. And every
-    Hindi-belt state carries the same figure, because this is a language map drawn on a state
-    grid — not per-state data, which the dataset does not contain.</p>`;
+  chartBars($("#lang"), l.rows.map(r => ({...r})), "sessions", null, "--s1");
+  renderTable($("#langtbl"), l.rows.map(r => ({...r})), [
+    {k:"value", t:"language"},
+    {k:"sessions", t:"sessions"},
+    {k:"sessions", t:"share", f:v => (v / T * 100).toFixed(2) + "%", dim:true},
+  ], null);
   perf(l);
 }
 
 const VIEWS = {overview:viewOverview, ops:viewOps, analyst:viewAnalyst,
                product:viewProduct, regions:viewRegions, pipeline:viewPipeline,
-               live:viewLive, arch:viewArchitecture, liveops:viewLiveOps};
+               live:viewLive, arch:viewArchitecture, liveops:viewLiveOps, ingest:viewIngest};
 
 function perf(r) {
   if (!r) return;
@@ -1832,6 +2067,7 @@ function wireStory(root) {
 let seq = 0;
 async function refresh() {
   if (state.tab !== "live") stopLive();
+  if (state.tab !== "ingest") stopIngest();
   renderFilters();
   const main = $("#main");
   main.classList.add("loading");           // hold the frame; no skeleton, no jump
