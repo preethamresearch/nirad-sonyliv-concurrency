@@ -1,7 +1,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161616'/%3E%3Crect x='6' y='17' width='4' height='9' rx='1.5' fill='%23faff69'/%3E%3Crect x='12.5' y='11' width='4' height='15' rx='1.5' fill='%23faff69'/%3E%3Crect x='19' y='6' width='4' height='20' rx='1.5' fill='%232a78d6'/%3E%3C/svg%3E">
-<title>Concurrency Analytics · SonyLIV · Team Nirad</title>
+<title>Watchhouse · Concurrency analytics for SonyLIV</title>
 <style>
 /* ===========================================================================
    Design tokens. One scale for type, one for space, one for elevation.
@@ -525,6 +525,44 @@ svg g.bar rect + rect, .rejrow .rbar span {
   svg path.animline { stroke-dasharray: none; stroke-dashoffset: 0; }
 }
 
+
+/* --- configuration -------------------------------------------------------- */
+.cfgrow { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.cfginput { flex: 1; padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: var(--r-sm); background: var(--surface-2);
+  font-family: ui-monospace, monospace; font-size: var(--t-sm); }
+.cfginput:focus { border-color: var(--focus); outline: none; }
+.verdict { padding: 8px 12px; border-radius: var(--r-sm); font-size: var(--t-sm);
+  font-weight: 600; margin-bottom: var(--sp-3); }
+.verdict.ok  { background: color-mix(in srgb, var(--good) 12%, var(--surface));
+  color: var(--good); border: 1px solid color-mix(in srgb, var(--good) 35%, transparent); }
+.verdict.bad { background: color-mix(in srgb, var(--crit) 12%, var(--surface));
+  color: var(--crit); border: 1px solid color-mix(in srgb, var(--crit) 35%, transparent); }
+.plangrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--sp-4); }
+.plangrid h4 { margin: 0 0 6px; font-size: var(--t-cap); text-transform: uppercase;
+  letter-spacing: .06em; color: var(--ink-3); }
+.plist { list-style: none; margin: 0; padding: 0; font-size: var(--t-sm); }
+.plist li { padding: 2px 0; color: var(--ink-2); }
+.plist .muted { color: var(--ink-3); }
+table.kv2 { width: 100%; }
+table.kv2 td { border: 0; padding: 4px 0; text-align: left; }
+table.kv2 td.k { color: var(--ink-3); font-size: var(--t-sm); width: 45%; }
+table.kv2 td.v { color: var(--ink-1); font-size: var(--t-sm);
+  font-family: ui-monospace, monospace; word-break: break-all; }
+.faultlist { max-height: 300px; overflow: auto; }
+.fitem { display: grid; grid-template-columns: 132px 1fr; gap: 10px; padding: 3px 0;
+  font-size: var(--t-cap); align-items: baseline; }
+.fitem code { color: var(--s1); }
+.fitem span { color: var(--ink-3); }
+.cmdblock { margin-bottom: var(--sp-3); }
+.cmdlabel { font-size: var(--t-cap); color: var(--ink-3); margin-bottom: 4px; }
+.cmdrow { display: flex; align-items: center; gap: var(--sp-2);
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 8px 10px; }
+.cmdrow code { flex: 1; font-size: var(--t-sm); color: var(--ink-1);
+  overflow-x: auto; white-space: nowrap; background: none; border: 0; padding: 0; }
+
 /* --- states -------------------------------------------------------------- */
 .skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
   var(--line-2) 63%); background-size: 400% 100%;
@@ -581,7 +619,7 @@ svg { display: block; width: 100%; overflow: visible; }
         <rect x="12.5" y="11" width="4" height="15" rx="1.5" fill="#faff69"/>
         <rect x="19" y="6" width="4" height="20" rx="1.5" fill="#3987e5"/>
       </svg>
-      <span class="wordmark"><b>Nirad</b><span>Concurrency</span></span>
+      <span class="wordmark"><b>Watchhouse</b><span>by Team Nirad</span></span>
     </a>
     <div class="scrollarea">
       <div class="grp">Monitor</div>
@@ -651,6 +689,8 @@ const TABS = [
    desc:"Stream throughput, consumer lag, dead letter queue, schema registry"},
   {id:"pipeline", grp:"Traces",  name:"Storage",
    desc:"Serving-layer footprint and query cost"},
+  {id:"config",   grp:"Traces",  name:"Configuration",
+   desc:"Dataset, resolved schema, and the automation behind it"},
   {id:"arch",     grp:"Traces",  name:"Architecture",
    desc:"Component topology and SQL console"},
 ];
@@ -1737,6 +1777,112 @@ function renderAlerts(host, alerts) {
 let _imTimer = null;
 function stopIngest() { if (_imTimer) { clearInterval(_imTimer); _imTimer = null; } }
 
+async function viewConfig(main) {
+  main.innerHTML = '<div class="grid" id="g">' +
+    card("Dataset check",
+      "Resolves a CSV header through the loader's alias table and reports what would map, " +
+      "what would be ignored and what would abort — without touching the database. " +
+      "Discovering a schema mismatch here beats discovering it from a wrong number.",
+      '<div class="cfgrow">' +
+        '<input id="cfgpath" class="cfginput" spellcheck="false" ' +
+          'placeholder="C:\\\\path\\\\to\\\\dataset.csv">' +
+        '<button id="cfgcheck" class="fdone">Check</button></div>' +
+      '<div id="planout"></div>', "col-12") +
+    card("Connection", "Where analytics run. Credentials come from .env, never the browser.",
+      '<div id="conn">' + skeleton(3) + '</div>', "col-5") +
+    card("Tables", "What this instance currently holds.",
+      '<div id="tables">' + skeleton(4) + '</div>', "col-7") +
+    card("Recent pipeline runs", "Every run writes provenance to sony.pipeline_runs.",
+      '<div id="runs">' + skeleton(4) + '</div>', "col-7") +
+    card("Fault injection",
+      "Deterministic fault classes for testing ingest against dirty input. Seeded, so a " +
+      "failure reproduces.",
+      '<div id="faults">' + skeleton(4) + '</div>', "col-5") +
+    card("Automation", "The exact commands this configuration maps to.",
+      '<div id="cmds"></div>', "col-12") +
+    '</div>';
+
+  const d = await api("/api/config");
+
+  $("#conn").innerHTML = '<table class="kv2"><tbody>' +
+    [["Host", d.connection.host], ["Database", d.connection.database],
+     ["User", d.connection.user], ["TLS", d.connection.secure ? "on" : "off"],
+     ["Expected columns", d.expected_columns.length],
+     ["Required (never defaulted)", d.required_columns.join(", ")],
+     ["Header aliases known", d.alias_count]].map(kv =>
+      '<tr><td class="k">' + esc(String(kv[0])) + '</td><td class="v">' +
+      esc(String(kv[1])) + '</td></tr>').join("") + '</tbody></table>';
+
+  renderTable($("#tables"), d.tables.map(t => ({...t, value: t.table})), [
+    {k:"value", t:"table"}, {k:"rows", t:"rows"},
+    {k:"parts", t:"parts", dim:true}, {k:"size", t:"size", f:v=>esc(v)},
+  ], null);
+
+  renderTable($("#runs"), d.runs.map(r => ({...r, value: r.run_id})), [
+    {k:"value", t:"run"}, {k:"status", t:"status", f:v=>esc(v)},
+    {k:"events", t:"events"},
+    {k:"oracle_match", t:"oracle", f:v => v
+      ? '<span style="color:var(--good)">match</span>'
+      : '<span style="color:var(--crit)">MISMATCH</span>'},
+    {k:"at", t:"started", f:v=>esc(String(v).slice(0,19)), dim:true},
+  ], null);
+
+  const byCat = {};
+  for (const [name, desc] of Object.entries(d.fault_classes)) (byCat[desc] = 1);
+  $("#faults").innerHTML = '<div class="faultlist">' +
+    Object.entries(d.fault_classes).map(kv =>
+      '<div class="fitem"><code>' + esc(kv[0]) + '</code><span>' + esc(kv[1]) +
+      '</span></div>').join("") + '</div>';
+
+  const path = "&lt;dataset.csv&gt;";
+  $("#cmds").innerHTML = [
+    ["Load and verify a dataset end to end",
+     "python scripts/run_sealed.py --raw " + path + " --content <content.csv>"],
+    ["Generate a dirty copy to test ingest",
+     "python scripts/inject_faults.py --raw " + path + " --out dirty.csv --faults all --rate 0.02"],
+    ["Verify against the independent oracle",
+     "python scripts/verify_against_oracle.py --raw " + path],
+    ["Replay through Kafka into ClickHouse",
+     "python scripts/stream_pipeline.py --produce dirty.csv && python scripts/stream_pipeline.py --consume --for 120"],
+  ].map(c =>
+    '<div class="cmdblock"><div class="cmdlabel">' + esc(c[0]) + '</div>' +
+    '<div class="cmdrow"><code>' + c[1] + '</code>' +
+    '<button class="copybtn cmdcopy">Copy</button></div></div>').join("");
+  $("#cmds").querySelectorAll(".cmdcopy").forEach(b =>
+    b.addEventListener("click", async () => {
+      const t = b.parentElement.querySelector("code").textContent;
+      try { await navigator.clipboard.writeText(t); } catch (_) {}
+      b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1200);
+    }));
+
+  async function check() {
+    const p = $("#cfgpath").value.trim();
+    if (!p) return;
+    $("#planout").innerHTML = '<p class="note-inline">resolving header…</p>';
+    const r = await (await fetch("/api/config?path=" + encodeURIComponent(p))).json();
+    const pl = r.plan || {};
+    if (pl.error) { $("#planout").innerHTML = '<p class="err">' + esc(pl.error) + '</p>'; return; }
+    $("#planout").innerHTML =
+      '<div class="verdict ' + (pl.ok ? "ok" : "bad") + '">' + esc(pl.verdict) +
+        ' · ' + esc(String(pl.size_mb)) + ' MB · ' + pl.header.length + ' columns</div>' +
+      '<div class="plangrid">' +
+        '<div><h4>Mapped ' + pl.mapped.length + '</h4><ul class="plist">' +
+          pl.mapped.map(m => '<li><code>' + esc(m.source) + '</code> → <b>' +
+            esc(m.target) + '</b></li>').join("") + '</ul></div>' +
+        '<div><h4>Ignored ' + pl.ignored.length + '</h4><ul class="plist">' +
+          (pl.ignored.length ? pl.ignored.map(x => '<li><code>' + esc(x) + '</code></li>').join("")
+                             : '<li class="muted">none</li>') + '</ul></div>' +
+        '<div><h4>Defaulted ' + pl.missing.length + '</h4><ul class="plist">' +
+          (pl.missing.length ? pl.missing.map(x => '<li><code>' + esc(x) + '</code>' +
+            (pl.fatal.includes(x) ? ' <b style="color:var(--crit)">REQUIRED</b>' : '') +
+            '</li>').join("") : '<li class="muted">none</li>') + '</ul></div>' +
+      '</div>';
+  }
+  $("#cfgcheck").addEventListener("click", check);
+  $("#cfgpath").addEventListener("keydown", e => { if (e.key === "Enter") check(); });
+  perf(d);
+}
+
 async function viewIngest(main) {
   main.innerHTML = '<div class="grid" id="g">' +
     tile("Rows held", "…", "across the three stages") +
@@ -2395,7 +2541,7 @@ async function viewRegions(main) {
 
 const VIEWS = {overview:viewOverview, ops:viewOps, analyst:viewAnalyst,
                product:viewProduct, regions:viewRegions, pipeline:viewPipeline,
-               live:viewLive, arch:viewArchitecture, liveops:viewLiveOps, ingest:viewIngest};
+               live:viewLive, arch:viewArchitecture, liveops:viewLiveOps, ingest:viewIngest, config:viewConfig};
 
 function perf(r) {
   if (!r) return;

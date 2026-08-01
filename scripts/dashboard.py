@@ -877,6 +877,98 @@ FROM sony.raw_events""",
             "rows_read": sum(rowcounts.values())}
 
 
+
+def configuration(args):
+    """What this instance is pointed at, and what a given file would load as.
+
+    The column plan is a DRY RUN: it resolves a header through the loader's own
+    alias table and reports what would map, what would be ignored, and what
+    would abort -- without touching the database. Discovering a schema mismatch
+    from a dashboard beats discovering it from a wrong number.
+    """
+    t_start = time.time()
+    cfg = ch.config()
+    out = {
+        "connection": {"host": cfg["host"], "port": cfg["port"], "database": cfg["db"],
+                       "user": cfg["user"], "secure": cfg["secure"]},
+        "expected_columns": list(load_mod().RAW_COLS),
+        "required_columns": list(load_mod().REQUIRED),
+        "alias_count": len(load_mod().ALIASES),
+        "fault_classes": {k: v[1] for k, v in
+                          sorted(fault_mod().FAULTS.items(), key=lambda kv: kv[1][0])},
+    }
+
+    jobs = {
+        "tables": """
+SELECT p.table AS t, sum(p.rows) AS rows, count() AS parts,
+       formatReadableSize(sum(p.bytes_on_disk)) AS size
+FROM system.parts AS p WHERE p.database = 'sony' AND p.active
+GROUP BY p.table ORDER BY sum(p.bytes_on_disk) DESC""",
+        "runs": "SELECT toString(started_at), run_id, status, toString(events), "
+                "toString(oracle_match), input_path FROM sony.pipeline_runs "
+                "ORDER BY started_at DESC LIMIT 8",
+        "schemas": "SELECT fingerprint, compatible, length(fields), "
+                   "arrayStringConcat(mapped, ', ') FROM sony.schema_registry "
+                   "GROUP BY fingerprint, compatible, fields, mapped LIMIT 8",
+    }
+    res, rowcounts = parallel_queries(jobs)
+
+    def rows_of(k):
+        return [l.split(chr(9)) for l in res.get(k, "").splitlines() if l]
+
+    out["tables"] = [{"table": r[0], "rows": int(r[1]), "parts": int(r[2]), "size": r[3]}
+                     for r in rows_of("tables")]
+    out["runs"] = [{"at": r[0], "run_id": r[1], "status": r[2], "events": int(r[3] or 0),
+                    "oracle_match": r[4] in ("1", "true"), "input": r[5]}
+                   for r in rows_of("runs")]
+    out["schemas"] = [{"fingerprint": r[0][:12], "compatible": r[1] == "1",
+                       "fields": int(r[2]), "mapped": r[3]} for r in rows_of("schemas")]
+
+    # optional dry run against a path the operator supplies
+    path = (args.get("path") or "").strip()
+    if path:
+        out["plan"] = plan_for(path)
+    out["latency_ms"] = round((time.time() - t_start) * 1000, 1)
+    out["rows_read"] = sum(rowcounts.values())
+    return out
+
+
+def load_mod():
+    import load
+    return load
+
+
+def fault_mod():
+    import inject_faults
+    return inject_faults
+
+
+def plan_for(path):
+    """Resolve a CSV header through the loader's alias table. No DB access."""
+    L = load_mod()
+    if not os.path.exists(path):
+        return {"ok": False, "error": "file not found: " + path}
+    try:
+        header, plan, unknown, missing = L.plan_columns(path, L.RAW_COLS)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+    fatal = [c for c in missing if c in L.REQUIRED]
+    mapped = [{"source": header[i].strip(), "target": t}
+              for i, (c, t) in enumerate(plan) if t]
+    return {
+        "ok": not fatal,
+        "path": path,
+        "size_mb": round(os.path.getsize(path) / 1048576, 1),
+        "header": [h.strip() for h in header],
+        "mapped": mapped,
+        "ignored": unknown,
+        "missing": missing,
+        "fatal": fatal,
+        "verdict": ("would ABORT: required column(s) unresolved" if fatal
+                    else "would load" + (" with defaults" if missing else " cleanly")),
+    }
+
+
 def overview():
     jobs = {
         "server":     "SELECT version()",
@@ -1187,6 +1279,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, language(args))
             if u.path == "/api/catalog":
                 return self._send(200, {"queries": CATALOG})
+            if u.path == "/api/config":
+                return self._send(200, configuration(args))
             if u.path == "/api/ingest_monitor":
                 return self._send(200, ingest_monitor(args))
             if u.path == "/api/live_ops":
