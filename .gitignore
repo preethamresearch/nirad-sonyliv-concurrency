@@ -33,3 +33,5 @@ web/shots/sony.png
 # Playwright browsers and pytest cache
 .pytest_cache/
 test-results/
+.env.edge
+infra/.env.edge

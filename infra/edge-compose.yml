@@ -1,0 +1,128 @@
+# The OSS edge stack -- identical on a laptop (WSL docker) and on the demo
+# VM. One file, so "works on my machine" and "works on the demo box" are the
+# same claim.
+#
+#   docker compose --env-file .env.edge -f edge-compose.yml up -d
+#
+# Secrets live in .env.edge (never committed): GOOGLE_KEY, CH_PASSWORD.
+# The analytics dashboard itself is NOT here -- it is stateless and runs on
+# Cloud Run; this stack is ingest (Redpanda/Redis), observability
+# (ClickStack, Langfuse) and the chat surface (LibreChat + MCP).
+
+services:
+  # ---- streaming ingest ---------------------------------------------------
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    container_name: redpanda
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      # Producers run on this host (replay.py / stream_pipeline.py), so the
+      # advertised address stays loopback; nothing brokers from the internet.
+      - --advertise-kafka-addr=PLAINTEXT://127.0.0.1:9092
+    ports: ["9092:9092", "9644:9644"]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports: ["6379:6379"]
+    restart: unless-stopped
+
+  # ---- observability ------------------------------------------------------
+  # ClickStack all-in-one: OTel collector (4317 gRPC / 4318 HTTP) + HyperDX
+  # UI (8080) + an embedded ClickHouse that stores telemetry in its own
+  # otel_* tables. Application traces are exported by scripts/otel.py --
+  # every ClickHouse query the product issues becomes a span, so "show me
+  # the graded run's queries" is a HyperDX search, not an assertion.
+  clickstack:
+    image: docker.hyperdx.io/hyperdx/hyperdx-all-in-one:latest
+    container_name: clickstack
+    ports: ["8080:8080", "4317:4317", "4318:4318"]
+    restart: unless-stopped
+
+  langfuse-db:
+    image: postgres:15-alpine
+    container_name: langfuse-db
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes: ["langfuse-pg:/var/lib/postgresql/data"]
+    restart: unless-stopped
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: langfuse
+    depends_on: [langfuse-db]
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-nirad-clickathon-2026-secret}
+      SALT: ${LANGFUSE_SALT:-nirad-clickathon-2026-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?set in .env.edge}
+      NEXTAUTH_URL: ${LANGFUSE_PUBLIC_URL:-http://localhost:3000}
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
+    ports: ["3000:3000"]
+    restart: unless-stopped
+
+  # ---- chat surface -------------------------------------------------------
+  librechat-db:
+    image: mongo:7
+    container_name: librechat-db
+    volumes: ["librechat-mongo:/data/db"]
+    restart: unless-stopped
+
+  librechat:
+    image: ghcr.io/danny-avila/librechat:latest
+    container_name: librechat
+    depends_on: [librechat-db, mcp]
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      MONGO_URI: mongodb://librechat-db:27017/LibreChat
+      ENDPOINTS: google
+      GOOGLE_KEY: ${GOOGLE_KEY:?set in .env.edge}
+      GOOGLE_MODELS: gemini-2.5-flash,gemini-2.5-pro
+      ALLOW_REGISTRATION: "true"
+      ALLOW_EMAIL_LOGIN: "true"
+      SEARCH: "false"
+      MEILI_ENABLED: "false"
+      JWT_SECRET: ${LIBRECHAT_JWT_SECRET:-nirad-clickathon-jwt-secret-2026}
+      JWT_REFRESH_SECRET: ${LIBRECHAT_JWT_REFRESH:-nirad-clickathon-refresh-2026}
+      CREDS_KEY: ${LIBRECHAT_CREDS_KEY:?set in .env.edge}
+      CREDS_IV: ${LIBRECHAT_CREDS_IV:?set in .env.edge}
+    volumes:
+      - ./librechat.yaml:/app/librechat.yaml:ro
+    ports: ["3080:3080"]
+    restart: unless-stopped
+
+  # ---- the data tools LibreChat calls -------------------------------------
+  # Same tool definitions as `python scripts/mcp_server.py` on stdio; the
+  # transport is the only difference. On this network LibreChat reaches it
+  # at http://mcp:8765/mcp -- the container boundary stdio could not cross.
+  mcp:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.mcp
+    container_name: mcp
+    environment:
+      CH_HOST: ${CH_HOST:?set in .env.edge}
+      CH_PORT: ${CH_PORT:-8443}
+      CH_SECURE: "1"
+      CH_USER: ${CH_USER:-default}
+      CH_PASSWORD: ${CH_PASSWORD:?set in .env.edge}
+      CH_DB: ${CH_DB:-sony}
+    ports: ["8765:8765"]
+    restart: unless-stopped
+
+volumes:
+  langfuse-pg:
+  librechat-mongo:

@@ -1,0 +1,33 @@
+# LibreChat configuration -- committed as submission evidence (no keys here;
+# GOOGLE_KEY and friends arrive via environment, see edge-compose.yml).
+#
+# The chat flow the brief asks for ("optionally, ask a follow-up question in
+# chat") is Gemini + the MCP tools below. The tools are the SAME verified
+# queries the dashboard runs -- the model is not free to invent SQL against
+# raw tables; it calls tools whose answers are oracle-verified, and it is
+# told to report a failed query as a failure rather than estimate.
+version: 1.2.1
+cache: true
+
+interface:
+  customWelcome: >-
+    Ask about SonyLIV concurrency: peaks, filters (platform, country,
+    video type), the naive-vs-foreground gap, or session behaviour.
+    Every number comes from a verified ClickHouse query, never from memory.
+
+mcpServers:
+  watchhouse:
+    type: streamable-http
+    url: http://mcp:8765/mcp
+    timeout: 60000
+    serverInstructions: >-
+      Tools return JSON from oracle-verified ClickHouse queries over the
+      judged dataset. If a tool returns an error, say the query failed --
+      do not estimate or invent a number.
+
+endpoints:
+  google:
+    models:
+      default: ["gemini-2.5-flash", "gemini-2.5-pro"]
+    titleConvo: true
+    titleModel: "gemini-2.5-flash"
