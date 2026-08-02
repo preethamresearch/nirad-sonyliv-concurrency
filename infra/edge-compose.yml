@@ -45,6 +45,11 @@ services:
   clickstack:
     image: docker.hyperdx.io/hyperdx/hyperdx-all-in-one:latest
     container_name: clickstack
+    environment:
+      # The UI builds its own links (auth redirects included) from this;
+      # the default is localhost:8080, which sends a remote visitor home.
+      FRONTEND_URL: ${CLICKSTACK_PUBLIC_URL:-http://localhost:8080}
+      HYPERDX_APP_URL: ${CLICKSTACK_PUBLIC_URL:-http://localhost:8080}
     ports: ["8080:8080", "4317:4317", "4318:4318"]
     restart: unless-stopped
 
