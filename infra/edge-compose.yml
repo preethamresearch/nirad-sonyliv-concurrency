@@ -88,7 +88,7 @@ services:
       HOST: 0.0.0.0
       PORT: 3080
       MONGO_URI: mongodb://librechat-db:27017/LibreChat
-      ENDPOINTS: google
+      ENDPOINTS: google,agents
       GOOGLE_KEY: ${GOOGLE_KEY:?set in .env.edge}
       GOOGLE_MODELS: gemini-2.5-flash,gemini-2.5-pro
       ALLOW_REGISTRATION: "true"
@@ -113,6 +113,11 @@ services:
       context: ..
       dockerfile: infra/Dockerfile.mcp
     container_name: mcp
+    networks:
+      default:
+        # LibreChat's URL validator wants a dotted hostname; a bare service
+        # name reads as "not a domain" and is refused before any request.
+        aliases: [mcp.internal]
     environment:
       CH_HOST: ${CH_HOST:?set in .env.edge}
       CH_PORT: ${CH_PORT:-8443}

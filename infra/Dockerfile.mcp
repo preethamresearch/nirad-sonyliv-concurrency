@@ -1,7 +1,10 @@
 # MCP server for the verified concurrency queries, HTTP transport.
 FROM python:3.12-slim
 WORKDIR /app
-RUN pip install --no-cache-dir "mcp>=1.9" uvicorn starlette
+# Pinned: the 2.x line renamed the decorator API (Server.list_tools is gone)
+# and the container silently crash-looped on latest. Same version as the
+# laptop, same behaviour.
+RUN pip install --no-cache-dir "mcp==1.29.0" uvicorn starlette
 COPY scripts/ scripts/
 COPY sql/ sql/
 ENV PYTHONUNBUFFERED=1

@@ -398,9 +398,36 @@ sink: at-least-once delivery plus an idempotent sink. A full replay dropped
 
 ### Hosted demo
 
-**https://watchhouse-1045532154243.asia-south1.run.app** — Cloud Run,
-`asia-south1`, serving the judged dataset live from ClickHouse Cloud.
-Landing at `/`, dashboards at `/app`, deck at `/deck`.
+| Surface | URL |
+|---|---|
+| **Dashboards** | https://watchhouse-1045532154243.asia-south1.run.app/app |
+| Landing | https://watchhouse-1045532154243.asia-south1.run.app/ |
+| Deck | https://watchhouse-1045532154243.asia-south1.run.app/deck |
+| HyperDX / ClickStack | http://8.231.76.83:8080 |
+| Langfuse | http://8.231.76.83:3000 |
+| LibreChat (Gemini + MCP tools) | http://8.231.76.83:3080 |
+| MCP server, Redpanda, Redis | VM-internal by design — LibreChat reaches MCP at `http://mcp:8765/mcp`; the brokers advertise loopback so no raw broker faces the internet |
+
+The dashboard runs on Cloud Run (`asia-south1`) serving the judged dataset
+live from ClickHouse Cloud; the stateful OSS stack runs on one GCE VM from
+`infra/edge-compose.yml`.
+
+**Submission artifacts, in one place:**
+
+| Artifact | Where |
+|---|---|
+| Judged results (peak/avg × grain × filters, latencies, evidence) | [`results/RESULTS.md`](results/RESULTS.md) |
+| Concurrency model + queries | [`sql/02_intervals.sql`](sql/02_intervals.sql), [`sql/03_serving.sql`](sql/03_serving.sql) |
+| Filter ↔ dataset column mapping | [this README, above](#filters-and-the-dataset-columns-that-back-them) |
+| Sealed-day pipeline (one command) | [`scripts/run_sealed.py`](scripts/run_sealed.py) |
+| Independent verifier | [`scripts/oracle.py`](scripts/oracle.py) |
+| OTel exporter → ClickStack | [`scripts/otel.py`](scripts/otel.py) |
+| MCP tools (chat ↔ verified queries) | [`scripts/mcp_server.py`](scripts/mcp_server.py) |
+| LibreChat config (keys redacted) | [`infra/librechat.yaml`](infra/librechat.yaml) |
+| Edge stack, reproducible anywhere | [`infra/edge-compose.yml`](infra/edge-compose.yml) |
+| Serving container | [`Dockerfile`](Dockerfile) |
+| E2E + sanity | [`tests/test_e2e.py`](tests/test_e2e.py), [`scripts/sanity.py`](scripts/sanity.py) |
+| Run provenance | `sony.pipeline_runs` (queryable), `out/sealed/<run-id>/` |
 
 ### Tool evidence
 

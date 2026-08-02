@@ -15,10 +15,20 @@ interface:
     video type), the naive-vs-foreground gap, or session behaviour.
     Every number comes from a verified ClickHouse query, never from memory.
 
+# LibreChat blocks private-network MCP targets by default (SSRF guard).
+# Our MCP server IS on the private compose network -- that is the design --
+# so it is exempted explicitly by host:port rather than by disabling the
+# guard.
+mcpSettings:
+  allowedDomains:
+    - "mcp.internal"
+  allowedAddresses:
+    - "mcp.internal:8765"
+
 mcpServers:
   watchhouse:
     type: streamable-http
-    url: http://mcp:8765/mcp
+    url: http://mcp.internal:8765/mcp/
     timeout: 60000
     serverInstructions: >-
       Tools return JSON from oracle-verified ClickHouse queries over the
