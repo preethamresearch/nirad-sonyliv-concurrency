@@ -1,0 +1,72 @@
+{
+  "exported_from": "http://8.231.76.83:3000",
+  "trace_count": 2,
+  "traces": [
+    {
+      "id": "9ff08fded25136ca0e9bf62d3945d1c2",
+      "externalId": null,
+      "timestamp": "2026-08-02T05:06:33.111Z",
+      "name": "mcp.concurrency",
+      "userId": null,
+      "metadata": {
+        "server": "sonyliv-concurrency",
+        "transport": "streamable-http"
+      },
+      "release": null,
+      "version": null,
+      "projectId": "watchhouse",
+      "public": false,
+      "bookmarked": false,
+      "tags": [
+        "clickhouse",
+        "judged",
+        "mcp"
+      ],
+      "input": {
+        "video_type": "live"
+      },
+      "output": "{\n  \"range_utc\": [\n    \"2026-07-24 14:01:00\",\n    \"2026-07-31 11:31:00\"\n  ],\n  \"filters\": {\n    \"video_type\": \"live\"\n  },\n  \"peak_concurrent_viewers\": 7759,\n  \"peak_at_utc\": \"2026-07-31 11:16:00\",\n  \"average_concurrent_viewers\": 30.19,\n  \"minutes_covered\": 9931,\n  \"computed_on\": \"s9vfs5b226.ap-south-1.aws.clickhouse.cloud\",\n  \"query_latency_ms\": 160.6\n}",
+      "sessionId": null,
+      "createdAt": "2026-08-02T05:06:33.968Z",
+      "updatedAt": "2026-08-02T05:06:33.968Z",
+      "scores": [],
+      "htmlPath": "/project/watchhouse/traces/9ff08fded25136ca0e9bf62d3945d1c2",
+      "totalCost": 0,
+      "latency": 0,
+      "observations": []
+    },
+    {
+      "id": "d22055ae9f8e699dda339de63d02d3ab",
+      "externalId": null,
+      "timestamp": "2026-08-02T05:06:32.558Z",
+      "name": "mcp.compare_to_naive",
+      "userId": null,
+      "metadata": {
+        "server": "sonyliv-concurrency",
+        "transport": "streamable-http"
+      },
+      "release": null,
+      "version": null,
+      "projectId": "watchhouse",
+      "public": false,
+      "bookmarked": false,
+      "tags": [
+        "clickhouse",
+        "judged",
+        "mcp"
+      ],
+      "input": {
+        "platform": "ANDROID_PHONE"
+      },
+      "output": "{\n  \"range_utc\": [\n    \"2026-07-24 14:01:00\",\n    \"2026-07-31 11:31:00\"\n  ],\n  \"filters\": {\n    \"platform\": \"ANDROID_PHONE\"\n  },\n  \"peak_concurrent_viewers\": 6046,\n  \"peak_at_utc\": \"2026-07-31 11:16:00\",\n  \"average_concurrent_viewers\": 29.64,\n  \"minutes_covered\": 9931,\n  \"computed_on\": \"s9vfs5b226.ap-south-1.aws.clickhouse.cloud\",\n  \"query_latency_ms\": 215.2,\n  \"naive_peak\": 7068,\n  \"foreground_only_peak\": 6046,\n  \"over_reported_viewers\": 1022,\n  \"over_reported_pct\": 14.5,\n  \"interpretation\": \"A naive session-overlap model would report 7,068 concurrent viewers at peak. Only 6,046 were actually watching -- 1,022 (14.5%) were paused, backgrounded, or had gone silent.\"\n}",
+      "sessionId": null,
+      "createdAt": "2026-08-02T05:06:33.964Z",
+      "updatedAt": "2026-08-02T05:06:33.964Z",
+      "scores": [],
+      "htmlPath": "/project/watchhouse/traces/d22055ae9f8e699dda339de63d02d3ab",
+      "totalCost": 0,
+      "latency": 0,
+      "observations": []
+    }
+  ]
+}

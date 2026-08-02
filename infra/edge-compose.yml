@@ -75,6 +75,18 @@ services:
       NEXTAUTH_URL: ${LANGFUSE_PUBLIC_URL:-http://localhost:3000}
       TELEMETRY_ENABLED: "false"
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
+      # Headless bootstrap: org, project, login and API keys exist from first
+      # boot -- no signup form between a judge and the traces. Keys come from
+      # .env.edge; the same pair is handed to the MCP container below.
+      LANGFUSE_INIT_ORG_ID: team-nirad
+      LANGFUSE_INIT_ORG_NAME: Team Nirad
+      LANGFUSE_INIT_PROJECT_ID: watchhouse
+      LANGFUSE_INIT_PROJECT_NAME: watchhouse
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PK:?set in .env.edge}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SK:?set in .env.edge}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_USER_EMAIL:?set in .env.edge}
+      LANGFUSE_INIT_USER_NAME: Team Nirad
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_USER_PASSWORD:?set in .env.edge}
     ports: ["3000:3000"]
     restart: unless-stopped
 
@@ -130,6 +142,11 @@ services:
       CH_USER: ${CH_USER:-default}
       CH_PASSWORD: ${CH_PASSWORD:?set in .env.edge}
       CH_DB: ${CH_DB:-sony}
+      # Every chat tool call becomes a Langfuse trace: the graded evidence
+      # that the chat flow ran through this pipeline, exportable as JSON.
+      LANGFUSE_HOST: http://langfuse:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PK:?set in .env.edge}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SK:?set in .env.edge}
     ports: ["8765:8765"]
     restart: unless-stopped
 

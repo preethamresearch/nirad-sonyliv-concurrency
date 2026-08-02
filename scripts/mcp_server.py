@@ -26,10 +26,12 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ch          # noqa: E402
 import dashboard   # noqa: E402  (reuses the exact queries the dashboard uses)
+import lftrace     # noqa: E402  (chat tool calls -> Langfuse; no-op if unset)
 
 from mcp.server import Server                      # noqa: E402
 from mcp.server.stdio import stdio_server          # noqa: E402
@@ -101,6 +103,22 @@ async def list_tools():
 @server.call_tool()
 async def call_tool(name, arguments):
     args = {k: v for k, v in (arguments or {}).items() if v not in (None, "", "all")}
+    t0 = time.time()
+    try:
+        out = await _dispatch(name, args)
+        lftrace.tool_call(name, args, out[0].text[:4000],
+                          round((time.time() - t0) * 1000, 1))
+        return out
+    except Exception as e:
+        lftrace.tool_call(name, args, None,
+                          round((time.time() - t0) * 1000, 1), error=str(e)[:300])
+        # Surface failures to the model as data, so it reports "I could not get
+        # that" instead of inventing a plausible number.
+        return [_fmt({"error": str(e)[:500],
+                      "note": "query failed; do not estimate a value"})]
+
+
+async def _dispatch(name, args):
     try:
         if name == "dimensions":
             ov = dashboard.overview()
