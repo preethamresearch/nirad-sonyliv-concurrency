@@ -402,6 +402,27 @@ sink: at-least-once delivery plus an idempotent sink. A full replay dropped
 `asia-south1`, serving the judged dataset live from ClickHouse Cloud.
 Landing at `/`, dashboards at `/app`, deck at `/deck`.
 
+### Tool evidence
+
+- **ClickStack / HyperDX** — ingestion is OTLP/HTTP from `scripts/otel.py`
+  (stdlib-only exporter, ~150 lines, committed): endpoint
+  `OTEL_EXPORTER_OTLP_ENDPOINT` (`:4318`), service `nirad-concurrency`,
+  authorization via `OTEL_EXPORTER_OTLP_HEADERS`. The collector inside
+  `hyperdx-all-in-one` writes to its **embedded ClickHouse** (`otel_traces`
+  and friends) — deliberately separate from the analytics service at
+  `s9vfs5b226.ap-south-1.aws.clickhouse.cloud`, so observability storage
+  cannot contend with the thing it observes. Spans: `clickhouse.query`
+  (with rows-read from `X-ClickHouse-Summary`), `pipeline.<stage>`,
+  `ingest.lag_seconds`. Graded runs are found in HyperDX by searching the
+  run id (e.g. `sealed-surprise`).
+- **LibreChat** — `infra/librechat.yaml` is committed (keys arrive via
+  environment). The chat flow reaches the data through MCP tools
+  (`scripts/mcp_server.py`) wrapping the same oracle-verified queries the
+  dashboard runs; the model is instructed to report a failed query as a
+  failure, never to estimate.
+- **Langfuse** — captures the chat/LLM traces; exports for the graded
+  chat sessions live in `results/evidence/` as JSON so judges need no login.
+
 ### Hosting: what runs where
 
 The data plane is **ClickHouse Cloud**, which was never local — so the entire
