@@ -143,6 +143,27 @@ li b,li strong{color:var(--ink)}
   font-variant-numeric:tabular-nums;line-height:1}
 .tc-gap span{font-size:13.5px;color:#a9a9a1;line-height:1.45}
 
+
+/* Title slide: header across the top, screenshot left, figures then stack
+   right. The two right blocks share one column so they line up under each
+   other rather than competing for the eye. */
+.titlegrid{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:start;
+  margin-top:20px}
+.titlegrid h1{font-size:46px}
+.title-slide h1{font-size:44px;margin-bottom:10px;max-width:24ch}
+.title-slide .sub{font-size:17px;margin-bottom:0}
+.tg-shot .shot img{max-height:236px;object-fit:cover;object-position:top}
+.tg-side{display:flex;flex-direction:column;gap:16px}
+.titlecompare{padding-top:0}
+.tc-row{grid-template-columns:132px 1fr 78px;gap:12px;margin-bottom:8px}
+.tc-num{font-size:23px}
+.tc-gap{margin-top:12px;padding-top:11px}
+.tc-gap b{font-size:32px}
+.tc-gap span{font-size:12.5px}
+.sidenote{padding:12px 14px}
+.stack{gap:5px;margin-bottom:0}
+.st{font-size:12px}
+
 /* screenshot slides */
 .shot{border:1px solid var(--hair);border-radius:8px;overflow:hidden;background:var(--plane);
   box-shadow:0 2px 10px rgba(0,0,0,.10)}
@@ -165,17 +186,22 @@ li b,li strong{color:var(--ink)}
 
 <!-- 1 ------------------------------------------------------------------ -->
 <section class="slide title-slide">
+  <div class="rule"></div>
+  <div class="tracklock">
+    <img class="tl-logo" src="/shots/sonyliv.png" alt="SonyLIV" onerror="this.remove()">
+    <span class="tl-brand">SonyLIV</span>
+    <span class="tl-sep"></span>
+    <span class="tl-meta">Click-a-thon 2026 · Track submission</span>
+  </div>
+  <h1>An open app is not a viewer.</h1>
+  <p class="sub">Foreground-only concurrency at streaming scale, computed on ClickHouse.</p>
+
   <div class="titlegrid">
-    <div>
-      <div class="rule"></div>
-      <div class="tracklock">
-        <img class="tl-logo" src="/shots/sonyliv.png" alt="SonyLIV" onerror="this.remove()">
-        <span class="tl-brand">SonyLIV</span>
-        <span class="tl-sep"></span>
-        <span class="tl-meta">Click-a-thon 2026 · Track submission</span>
-      </div>
-      <h1>An open app is not a viewer.</h1>
-      <p class="sub">Foreground-only concurrency at streaming scale, computed on ClickHouse.</p>
+    <div class="tg-shot">
+      <div class="shot" style="border-color:#33352f"><img src="/shots/01-landing.jpg"
+        alt="Watchhouse landing page"></div>
+    </div>
+    <div class="tg-side">
       <div class="titlecompare">
         <div class="tc-row">
           <div class="tc-lab">Reported peak</div>
@@ -192,10 +218,6 @@ li b,li strong{color:var(--ink)}
           <span>phantom audience &mdash; 17.4% of what a session-overlap model reports</span>
         </div>
       </div>
-    </div>
-    <aside class="titleside">
-      <div class="shot" style="border-color:#33352f"><img src="/shots/01-landing.jpg"
-        alt="Watchhouse landing page"></div>
       <div class="sidenote">
         <div class="sn-h">Running, not described</div>
         <div class="stack">
@@ -212,13 +234,10 @@ li b,li strong{color:var(--ink)}
           <div class="st"><span class="d"></span><b>Redis</b>
             <em>dedup set + open sessions</em></div>
         </div>
-        <div class="sn-tags">
-          <span>oracle parity exact</span><span>2,028 events/s</span><span>77 s end to end</span>
-        </div>
       </div>
-    </aside>
+    </div>
   </div>
-  <div class="meta">Team Nirad · github.com/preethamresearch/nirad-sonyliv-concurrency</div>
+  <div class="slidemark">Watchhouse · SonyLIV track</div>
   <div class="n" style="color:#6f6f68">1 / 15</div>
 </section>
 
