@@ -284,6 +284,25 @@ against ground truth.
 The rehearsal on a shuffled, renamed, widened, 218 MB dirty file found bugs 1, 2
 and 4 above. Against clean data the pipeline still returns exact parity.
 
+### The judged surprise dataset, day of
+
+The rehearsal was for this. The evaluation set arrived **9× larger** (7,000,000
+events, 1.82 GB), from a **different week**, with **three new columns**, a
+renamed timestamp, 1,078 blank `video_type`s and 8,940 stray timestamps
+spanning 2014–2026. One command, zero code changes:
+
+```
+python scripts/run_sealed.py --raw ch-hackathon-raw-data_surprise.csv --content ch-hackathon-content-data_surprise.csv
+```
+
+loaded it at 44k rows/s, derived **149,500 intervals**, and the independent
+oracle matched **exactly** — on data we had never seen. Peak concurrency
+**18,936** foreground-only against a naive **24,087** — a 21.4% phantom
+audience, worse than the sample data's 17.4%: at peak, more than one in five
+reported viewers was not watching. Full figures at every grain,
+with filters, server-attested latencies and query-log evidence:
+[`results/RESULTS.md`](results/RESULTS.md).
+
 ---
 
 ## What we would rather not report

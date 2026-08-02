@@ -896,8 +896,15 @@ function qs(extra) {
   return p.toString();
 }
 async function api(path, extra) {
+  // Renders are async and the user can switch views mid-flight. A superseded
+  // render must not write its answers into the view that replaced it, so
+  // every api() call remembers which render generation it belongs to and
+  // aborts on resolution if the world moved on. The view function throws at
+  // its next await instead of scribbling on someone else's DOM.
+  const born = seq;
   const r = await fetch(path + "?" + qs(extra));
   const j = await r.json();
+  if (born !== seq) throw new Error("__stale_render__");
   if (j.error) throw new Error(j.error);
   return j;
 }
@@ -3207,7 +3214,10 @@ async function refresh() {
     wireInfo(main);
     await f; if (mine===seq) renderFilters();
   } catch (e) {
-    main.innerHTML = `<div class="card col-12"><p class="err">${esc(e.message)}</p></div>`;
+    // A stale render's abort is bookkeeping, not news; only the render that
+    // currently owns the frame may report an error into it.
+    if (mine === seq && e.message !== "__stale_render__")
+      main.innerHTML = `<div class="card col-12"><p class="err">${esc(e.message)}</p></div>`;
   } finally { if (mine===seq) main.classList.remove("loading"); }
 }
 

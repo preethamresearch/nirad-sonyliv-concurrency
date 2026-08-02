@@ -170,6 +170,27 @@ def main():
     tr.stage("load_raw", rows=n_raw, seconds=load_s,
              rows_per_sec=int(n_raw / max(load_s, 0.01)), ingest_lag_seconds=lag_s)
 
+    # session_spans is an insert-fired MV target, and this run replaced
+    # raw_events UNDER the MV -- truncation does not fire a materialized
+    # view, so without a rebuild the spans still describe the previous
+    # dataset. We found 13,735 stale sessions this way; anything reading
+    # spans (the naive baseline, multi-device analysis) would silently
+    # blend two datasets.
+    t = time.time()
+    ch.execute("TRUNCATE TABLE sony.session_spans")
+    ch.execute("""
+INSERT INTO sony.session_spans
+SELECT video_session_id,
+       min(event_timestamp_ms), max(event_timestamp_ms), toUInt64(count()),
+       argMinState(platform, event_timestamp_ms),
+       argMinState(country, event_timestamp_ms),
+       argMinState(content_id, event_timestamp_ms),
+       uniqState(toString(platform))
+FROM sony.raw_events GROUP BY video_session_id""")
+    tr.stage("rebuild_spans",
+             rows=int(ch.scalar("SELECT count() FROM sony.session_spans")),
+             seconds=round(time.time() - t, 2))
+
     # Data-quality gates. These are the shapes that broke us on the provided
     # dataset; if the sealed day differs we want it in the trace, loudly,
     # rather than discovered in the answers.

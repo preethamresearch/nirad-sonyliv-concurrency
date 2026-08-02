@@ -1,0 +1,150 @@
+{
+  "run_id": "ui-20260802-024350",
+  "generated_utc": "2026-08-02T02:53:57.219892+00:00",
+  "git_commit": "e29c9a4a1e69537d829741e98f09dcd30977cfe5",
+  "git_dirty": true,
+  "clickhouse": {
+    "host": "s9vfs5b226.ap-south-1.aws.clickhouse.cloud",
+    "secure": true,
+    "version": "26.2.1.525"
+  },
+  "inputs": {
+    "raw": "C:\\Users\\91861\\Downloads\\ch-hackathon-raw-data_surprise.csv",
+    "raw_sha256": "06897bd68b1a5f5729cd1668525c059eb969cfe4e4acdccfe4a6849787775c95",
+    "content": "C:\\Users\\91861\\Downloads\\ch-hackathon-content-data_surprise.csv"
+  },
+  "model_params": {
+    "gap_timeout_ms": 120000,
+    "gap_grace_ms": 0,
+    "liveness_events": [
+      "buffer-health",
+      "network-activity",
+      "video-resize"
+    ],
+    "watermark_ms": 1785756375032
+  },
+  "stages": [
+    {
+      "stage": "connect",
+      "at_s": 0.139,
+      "host": "s9vfs5b226.ap-south-1.aws.clickhouse.cloud",
+      "secure": true,
+      "server": "26.2.1.525"
+    },
+    {
+      "stage": "input",
+      "at_s": 10.863,
+      "raw": "ch-hackathon-raw-data_surprise.csv",
+      "raw_bytes": 1906911465,
+      "raw_sha256": "06897bd68b1a5f57",
+      "git": "8557c5d04a75",
+      "dirty": true
+    },
+    {
+      "stage": "schema",
+      "at_s": 11.961,
+      "seconds": 1.1
+    },
+    {
+      "stage": "truncate",
+      "at_s": 14.876,
+      "tables": 4
+    },
+    {
+      "stage": "load_content",
+      "at_s": 18.041,
+      "rows": 33326,
+      "seconds": 3.16
+    },
+    {
+      "stage": "schema_match",
+      "at_s": 200.618,
+      "columns_matched": 13,
+      "unrecognised": [
+        "\"video_resolution\""
+      ],
+      "missing_defaulted": [],
+      "staged_rows": 7000000
+    },
+    {
+      "stage": "load_raw",
+      "at_s": 200.967,
+      "rows": 7000000,
+      "seconds": 182.58,
+      "rows_per_sec": 38339,
+      "ingest_lag_seconds": -117543.0
+    },
+    {
+      "stage": "data_profile",
+      "at_s": 202.7,
+      "sessions": 108486,
+      "users": 82958,
+      "range": "2014-12-31 18:31:10.260 .. 2026-08-03 11:26:15.032",
+      "open_sessions": 37649,
+      "dict_misses": 0,
+      "unknown_event_types": "none"
+    },
+    {
+      "stage": "derive_intervals",
+      "at_s": 207.808,
+      "rows": 149500,
+      "open_intervals": 0,
+      "active_hours": 12872.0,
+      "watermark_ms": 1785756375032,
+      "seconds": 4.77
+    },
+    {
+      "stage": "build_serving",
+      "at_s": 213.201,
+      "delta_rows": 110181,
+      "checkpoint_rows": 6939,
+      "minute_grid_rows_avoided": 919842,
+      "seconds": 5.39
+    },
+    {
+      "stage": "naive_baseline",
+      "at_s": 213.674,
+      "peak": 24087
+    },
+    {
+      "stage": "benchmark",
+      "at_s": 454.488,
+      "queries": 10,
+      "disagreements": 0,
+      "seconds": 240.81
+    },
+    {
+      "stage": "oracle_parity",
+      "at_s": 604.692,
+      "oracle_intervals": 149500,
+      "clickhouse_intervals": 149500,
+      "only_oracle": 0,
+      "only_clickhouse": 0,
+      "match": true,
+      "seconds": 150.2
+    },
+    {
+      "stage": "query_log",
+      "at_s": 605.852,
+      "entries": 2758
+    },
+    {
+      "stage": "clickstack_export",
+      "at_s": 605.907,
+      "enabled": true,
+      "spans_flushed": 117,
+      "dropped": 0,
+      "trace_id": "c27e251c0b6c4222a344c9819777376c"
+    }
+  ],
+  "oracle_parity": {
+    "skipped": false,
+    "oracle_intervals": 149500,
+    "clickhouse_intervals": 149500,
+    "only_oracle": 0,
+    "only_clickhouse": 0,
+    "match": true
+  },
+  "answers_file": "answers.json",
+  "clickstack_trace_id": "c27e251c0b6c4222a344c9819777376c"
+}

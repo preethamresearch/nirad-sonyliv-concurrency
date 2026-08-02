@@ -9,3 +9,8 @@
 {"stage": "derive_intervals", "at_s": 207.808, "rows": 149500, "open_intervals": 0, "active_hours": 12872.0, "watermark_ms": 1785756375032, "seconds": 4.77}
 {"stage": "build_serving", "at_s": 213.201, "delta_rows": 110181, "checkpoint_rows": 6939, "minute_grid_rows_avoided": 919842, "seconds": 5.39}
 {"stage": "naive_baseline", "at_s": 213.674, "peak": 24087}
+{"stage": "benchmark", "at_s": 454.488, "queries": 10, "disagreements": 0, "seconds": 240.81}
+{"stage": "oracle_parity", "at_s": 604.692, "oracle_intervals": 149500, "clickhouse_intervals": 149500, "only_oracle": 0, "only_clickhouse": 0, "match": true, "seconds": 150.2}
+{"stage": "query_log", "at_s": 605.852, "entries": 2758}
+{"stage": "clickstack_export", "at_s": 605.907, "enabled": true, "spans_flushed": 117, "dropped": 0, "trace_id": "c27e251c0b6c4222a344c9819777376c"}
+{"stage": "provenance", "at_s": 632.604, "table": "sony.pipeline_runs", "run_id": "ui-20260802-024350"}
