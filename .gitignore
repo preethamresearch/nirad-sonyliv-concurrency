@@ -29,3 +29,7 @@ scripts/_check_oracle_parallel.py
 scripts/prep_logo.py
 web/shots/*-source.*
 web/shots/sony.png
+
+# Playwright browsers and pytest cache
+.pytest_cache/
+test-results/
