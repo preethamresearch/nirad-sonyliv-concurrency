@@ -9,3 +9,8 @@
 {"stage": "derive_intervals", "at_s": 244.395, "rows": 149500, "open_intervals": 0, "active_hours": 12872.0, "watermark_ms": 1785756375032, "seconds": 4.62}
 {"stage": "build_serving", "at_s": 249.519, "delta_rows": 110181, "checkpoint_rows": 6939, "minute_grid_rows_avoided": 919842, "seconds": 5.12}
 {"stage": "naive_baseline", "at_s": 249.919, "peak": 24087}
+{"stage": "benchmark", "at_s": 384.653, "queries": 10, "disagreements": 0, "seconds": 134.73}
+{"stage": "oracle_parity", "at_s": 511.539, "oracle_intervals": 149500, "clickhouse_intervals": 149500, "only_oracle": 0, "only_clickhouse": 0, "match": true, "seconds": 126.89}
+{"stage": "query_log", "at_s": 512.742, "entries": 2496}
+{"stage": "clickstack_export", "at_s": 512.858, "enabled": true, "spans_flushed": 117, "dropped": 0, "trace_id": "3f36f3c16537168bb5e0e771936b104b"}
+{"stage": "provenance", "at_s": 540.022, "table": "sony.pipeline_runs", "run_id": "sealed-surprise"}

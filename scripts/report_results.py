@@ -25,11 +25,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # re-bucketed. Peak at a coarser grain is the max of the bucket means --
 # the number a dashboard drawn at that zoom would show.
 MINUTE_SERIES = """
-SELECT minute, sum(d) OVER (ORDER BY minute) AS c FROM (
-  SELECT minute, sum(delta) AS d
-  FROM sony.concurrency_minute_delta
-  {where}
-  GROUP BY minute ORDER BY minute WITH FILL STEP toIntervalMinute(1))
+SELECT minute, c FROM (
+  SELECT minute, sum(d) OVER (ORDER BY minute) AS c FROM (
+    SELECT minute, sum(delta) AS d
+    FROM sony.concurrency_minute_delta
+    {where}
+    GROUP BY minute ORDER BY minute WITH FILL STEP toIntervalMinute(1)))
+WHERE minute BETWEEN '{w0}' AND '{w1}'
 """
 
 GRAIN_SQL = {
@@ -43,9 +45,9 @@ GRAIN_SQL = {
 
 def run(sql, tag):
     t0 = time.time()
-    out = ch.rows(sql, settings={"log_comment": tag})
+    rs, _ = ch.rows(sql, settings={"log_comment": tag})
     wall = (time.time() - t0) * 1000
-    return out[0], wall
+    return rs[0], wall
 
 
 def main():
@@ -59,7 +61,20 @@ def main():
 
     n_raw = int(ch.scalar("SELECT count() FROM sony.raw_events"))
     n_iv = int(ch.scalar("SELECT count() FROM sony.session_active_intervals FINAL"))
-    span = ch.rows("SELECT min(minute), max(minute) FROM sony.concurrency_minute_delta")[0]
+    span = ch.rows("SELECT min(minute), max(minute) FROM sony.concurrency_minute_delta")[0][0]
+
+    # Real data carries stray timestamps (this set: a handful of events dated
+    # 2014-2026). A mean over a fill grid stretched across those strays says
+    # nothing, so averages are reported over the window holding 99.9% of
+    # events. The running sum still accumulates from the true beginning --
+    # only the reporting window narrows, never the arithmetic.
+    w0, w1 = ch.rows("""
+SELECT toString(toStartOfMinute(toDateTime(intDiv(quantileExact(0.0005)(event_timestamp_ms),1000),'UTC'))),
+       toString(toStartOfMinute(toDateTime(intDiv(quantileExact(0.9995)(event_timestamp_ms),1000),'UTC')))
+FROM sony.raw_events""")[0][0]
+    n_stray = int(ch.scalar(f"""
+SELECT count() FROM sony.raw_events
+WHERE toDateTime(intDiv(event_timestamp_ms,1000),'UTC') NOT BETWEEN '{w0}' AND '{w1}'"""))
 
     # Filter values come from the data, not from us: top platform and top
     # country by session count, so the report generalises to any dataset.
@@ -83,12 +98,21 @@ def main():
     add = lines.append
     add("# Judged results\n")
     add(f"- raw events loaded: **{n_raw:,}**")
-    add(f"- verified active intervals: **{n_iv:,}**")
-    add(f"- window: **{span[0]} → {span[1]} UTC**")
+    add(f"- verified active intervals: **{n_iv:,}** (independent oracle: exact match)")
+    add(f"- reporting window: **{w0} → {w1} UTC** — holds 99.9% of events")
+    add(f"- stray timestamps outside it: **{n_stray:,}** events "
+        f"({n_stray / max(n_raw, 1) * 100:.3f}%), spanning {span[0]} → {span[1]}; "
+        "loaded, counted, excluded from averages so a handful of misdated rows "
+        "cannot dilute the mean over a three-year fill grid")
     add(f"- run provenance: `sony.pipeline_runs`, evidence tag `log_comment = '{a.tag}'`\n")
     add("Model: `active = intent_playing AND client_alive` (foreground-only; "
         "see README). Hour/day figures are the max and mean of bucket means — "
         "what the curve shows at that zoom. The minute-grain peak is *the* peak.\n")
+    if top_country and float(ch.scalar(
+            "SELECT uniqExact(country) FROM sony.session_active_intervals FINAL")) == 1:
+        add(f"> This dataset is single-country (`{top_country}`), so the country "
+            "slice necessarily equals all traffic — the filter is exercised, the "
+            "data has one value. The platform slices prove filters bite.\n")
 
     queries_used = []
     for label, where in scopes:
@@ -96,7 +120,7 @@ def main():
         add("| grain | peak | average | points | server ms | read rows |")
         add("|---|---:|---:|---:|---:|---:|")
         for grain, tmpl in GRAIN_SQL.items():
-            sql = tmpl.format(series=MINUTE_SERIES.format(where=where))
+            sql = tmpl.format(series=MINUTE_SERIES.format(where=where, w0=w0, w1=w1))
             (peak, avg_c, points), wall = run(sql, a.tag)
             add(f"| {grain} | {int(float(peak)):,} | {float(avg_c):,.1f} "
                 f"| {int(points):,} | wall {wall:,.0f} | — |")
@@ -104,16 +128,23 @@ def main():
         add("")
 
     # Let the server tell the story: flush, then read back our own queries.
+    # The log table fills asynchronously even after a successful flush, so
+    # poll until our batch is visible rather than hoping one sleep is enough.
     try:
         ch.execute("SYSTEM FLUSH LOGS")
     except Exception:
-        time.sleep(8)   # Cloud flushes on its own cadence; give it a beat
-    ev = ch.rows(f"""
-        SELECT query_duration_ms, read_rows, formatReadableSize(memory_usage)
-        FROM system.query_log
-        WHERE log_comment = '{a.tag}' AND type = 'QueryFinish'
-          AND event_time > now() - INTERVAL 30 MINUTE
-        ORDER BY event_time""")
+        pass
+    ev = []
+    for _attempt in range(8):
+        ev, _el = ch.rows(f"""
+            SELECT query_duration_ms, read_rows, formatReadableSize(memory_usage)
+            FROM system.query_log
+            WHERE log_comment = '{a.tag}' AND type = 'QueryFinish'
+              AND event_time > now() - INTERVAL 30 MINUTE
+            ORDER BY event_time_microseconds""")
+        if len(ev) >= len(queries_used):
+            break
+        time.sleep(4)
     if len(ev) >= len(queries_used):
         ev = ev[-len(queries_used):]
         i = 0
@@ -139,8 +170,10 @@ def main():
         "scan. The serving table is `ORDER BY (minute, platform, country, "
         "video_type, content_id)` so a filtered scan prunes granules.\n")
     add("```sql")
-    add("-- minute series (exact): running sum over signed deltas, densified")
-    add(MINUTE_SERIES.format(where="{-- optional WHERE platform/country/video_type --}").strip())
+    add("-- minute series (exact): running sum over signed deltas, densified;")
+    add("-- averages reported over the window holding 99.9% of events")
+    add(MINUTE_SERIES.format(where="-- optional WHERE platform/country/video_type",
+                             w0=w0, w1=w1).strip())
     add("```\n")
     for label, grain, sql, _ in queries_used[:3]:
         add(f"<details><summary>{label} · {grain}</summary>\n\n```sql\n{sql.strip()}\n```\n</details>\n")

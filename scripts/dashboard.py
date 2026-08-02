@@ -21,7 +21,9 @@ wi-fi cannot break the demo, and there is nothing to install at 3am.
 """
 import json
 import os
+import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1374,6 +1376,97 @@ ORDER BY peak DESC LIMIT {limit}"""
             "rows_read": int(ch.LAST_SUMMARY.get("read_rows", 0) or 0)}
 
 
+# --------------------------------------------------------------------------
+# Pipeline runs, launched and watched from the product itself.
+#
+# The run is the SAME entry point a terminal uses (run_sealed.py) -- the UI
+# adds no second code path that could drift from the audited one. One run at
+# a time: the stage tables and EXCHANGE swaps are not designed for two
+# writers, so the lock refuses rather than corrupts.
+# --------------------------------------------------------------------------
+_RUN_LOCK = threading.Lock()
+_RUN = {"proc": None, "log": None, "run_id": None, "started": None,
+        "raw": None, "content": None}
+_RUN_DIR = os.path.join(REPO, "runs")
+
+
+def pipeline_launch(body):
+    raw = (body.get("raw") or "").strip().strip('"')
+    content = (body.get("content") or "").strip().strip('"')
+    if not raw:
+        return {"error": "raw CSV path is required"}
+    if not os.path.isfile(raw):
+        return {"error": "raw file not found: " + raw}
+    if content and not os.path.isfile(content):
+        return {"error": "content file not found: " + content}
+
+    with _RUN_LOCK:
+        if _RUN["proc"] is not None and _RUN["proc"].poll() is None:
+            return {"error": "a run is already in progress",
+                    "run_id": _RUN["run_id"]}
+        run_id = "ui-" + time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        os.makedirs(_RUN_DIR, exist_ok=True)
+        log_path = os.path.join(_RUN_DIR, run_id + ".log")
+        cmd = [sys.executable, "-u",
+               os.path.join(REPO, "scripts", "run_sealed.py"),
+               "--raw", raw, "--run-id", run_id]
+        if content:
+            cmd += ["--content", content]
+        fh = open(log_path, "w", encoding="utf-8")
+        try:
+            proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT,
+                                    cwd=REPO)
+        except OSError as e:
+            fh.close()
+            return {"error": "could not start run: " + str(e)}
+        _RUN.update(proc=proc, log=log_path, run_id=run_id,
+                    started=time.time(), raw=raw, content=content or None)
+    return {"ok": True, "run_id": run_id,
+            "command": " ".join(os.path.basename(c) if os.sep in c else c
+                                for c in cmd)}
+
+
+def pipeline_status():
+    with _RUN_LOCK:
+        proc, log_path = _RUN["proc"], _RUN["log"]
+        run_id, started = _RUN["run_id"], _RUN["started"]
+        raw, content = _RUN["raw"], _RUN["content"]
+
+    out = {"run_id": run_id, "raw": raw, "content": content,
+           "active": False, "exit_code": None, "elapsed_s": None, "log": []}
+    if proc is not None:
+        rc = proc.poll()
+        out["active"] = rc is None
+        out["exit_code"] = rc
+        out["elapsed_s"] = round(time.time() - started, 1) if started else None
+    if log_path and os.path.exists(log_path):
+        try:
+            with open(log_path, "rb") as fh:
+                fh.seek(max(0, os.path.getsize(log_path) - 65536))
+                tail = fh.read().decode("utf-8", "replace")
+            out["log"] = tail.splitlines()[-120:]
+        except OSError:
+            pass
+
+    # Provenance comes from the database, not from this process's memory, so
+    # it also covers runs started from a terminal.
+    try:
+        rows, _ = ch.rows("""
+SELECT run_id, status, toString(started_at), round(duration_s, 1),
+       events, intervals, peak_concurrency, naive_peak,
+       if(oracle_match, 'exact', 'DIVERGED'), substring(git_commit, 1, 12)
+FROM sony.pipeline_runs FINAL ORDER BY started_at DESC LIMIT 6""")
+        out["provenance"] = [
+            {"run_id": r[0], "status": r[1], "started": r[2],
+             "seconds": float(r[3] or 0), "events": int(r[4] or 0),
+             "intervals": int(r[5] or 0), "peak": int(r[6] or 0),
+             "naive_peak": int(r[7] or 0), "oracle": r[8], "commit": r[9]}
+            for r in rows]
+    except Exception as e:
+        out["provenance_error"] = str(e)[:200]
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass  # keep the console clean during a live demo
@@ -1443,6 +1536,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"queries": CATALOG})
             if u.path == "/api/config":
                 return self._send(200, configuration(args))
+            if u.path == "/api/pipeline/status":
+                return self._send(200, pipeline_status())
             if u.path == "/api/ingest_monitor":
                 return self._send(200, ingest_monitor(args))
             if u.path == "/api/replay":
@@ -1453,6 +1548,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, pipeline_live(args))
             if u.path == "/api/playground":
                 return self._send(200, playground(args))
+            self._send(404, {"error": "not found"})
+        except Exception as e:
+            self._send(500, {"error": str(e)[:800]})
+
+    def do_POST(self):
+        u = urllib.parse.urlparse(self.path)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+            if not isinstance(body, dict):
+                return self._send(400, {"error": "JSON object expected"})
+            if u.path == "/api/pipeline/run":
+                out = pipeline_launch(body)
+                return self._send(400 if "error" in out else 200, out)
             self._send(404, {"error": "not found"})
         except Exception as e:
             self._send(500, {"error": str(e)[:800]})

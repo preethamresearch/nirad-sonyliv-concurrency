@@ -564,6 +564,33 @@ table.kv2 td.v { color: var(--ink-1); font-size: var(--t-sm);
 .cmdrow code { flex: 1; font-size: var(--t-sm); color: var(--ink-1);
   overflow-x: auto; white-space: nowrap; background: none; border: 0; padding: 0; }
 
+/* --- pipeline run, launched from the product ------------------------------ */
+.runhead { display: flex; align-items: center; gap: var(--sp-2);
+  margin-bottom: var(--sp-2); flex-wrap: wrap; }
+.runhead code { font-size: var(--t-sm); color: var(--ink-1); }
+.runhead .muted { color: var(--ink-3); font-size: var(--t-cap); }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px;
+  font-size: var(--t-cap); font-weight: 600; }
+.pill.run { background: color-mix(in srgb, var(--s1) 14%, var(--surface));
+  color: var(--s1); border: 1px solid color-mix(in srgb, var(--s1) 35%, transparent); }
+.pill.ok  { background: color-mix(in srgb, var(--good) 14%, var(--surface));
+  color: var(--good); border: 1px solid color-mix(in srgb, var(--good) 35%, transparent); }
+.pill.bad { background: color-mix(in srgb, var(--crit) 14%, var(--surface));
+  color: var(--crit); border: 1px solid color-mix(in srgb, var(--crit) 35%, transparent); }
+table.runprov { margin: var(--sp-2) 0; }
+table.runprov th { text-align: left; font-size: var(--t-cap); color: var(--ink-3);
+  font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  padding: 2px 8px 2px 0; border: 0; }
+table.runprov td { padding: 3px 8px 3px 0; font-size: var(--t-sm); border: 0; }
+table.runprov td.num { font-variant-numeric: tabular-nums; }
+table.runprov td.dim { color: var(--ink-3); }
+.runlog { margin-top: var(--sp-3); max-height: 320px; overflow: auto;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 10px 12px;
+  font-family: ui-monospace, monospace; font-size: var(--t-cap);
+  line-height: 1.55; color: var(--ink-2); white-space: pre-wrap;
+  overflow-wrap: anywhere; }
+
 
 /* --- overflow containment -------------------------------------------------
    Nothing may render outside its card. Flex and grid children default to
@@ -2237,6 +2264,19 @@ async function viewConfig(main) {
           'placeholder="C:\\\\path\\\\to\\\\dataset.csv">' +
         '<button id="cfgcheck" class="fdone">Check</button></div>' +
       '<div id="planout"></div>', "col-12") +
+    card("Run the pipeline",
+      "The same entry point a terminal uses — load, dedupe, build intervals, " +
+      "derive deltas, verify against the independent oracle — launched from here " +
+      "and watched live. One run at a time; the button refuses rather than " +
+      "corrupts a run in flight.",
+      '<div class="cfgrow">' +
+        '<input id="runraw" class="cfginput" spellcheck="false" ' +
+          'placeholder="raw events CSV — C:\\\\path\\\\to\\\\raw.csv">' +
+        '<input id="runcontent" class="cfginput" spellcheck="false" ' +
+          'placeholder="content CSV (optional — reuses loaded dimension)">' +
+        '<button id="runbtn" class="fdone">Run</button></div>' +
+      '<div id="runstate"></div>' +
+      '<pre id="runlog" class="runlog" hidden></pre>', "col-12") +
     card("Connection", "Where analytics run. Credentials come from .env, never the browser.",
       '<div id="conn">' + skeleton(3) + '</div>', "col-5") +
     card("Tables", "What this instance currently holds.",
@@ -2331,8 +2371,92 @@ async function viewConfig(main) {
   }
   $("#cfgcheck").addEventListener("click", check);
   $("#cfgpath").addEventListener("keydown", e => { if (e.key === "Enter") check(); });
+
+  /* ---- run the pipeline from here, watch it live ---------------------- */
+  function paintRun(s) {
+    const st = $("#runstate"), lg = $("#runlog");
+    if (!st) return;
+    if (!s.run_id && !(s.provenance || []).length) {
+      st.innerHTML = '<p class="note-inline">No run launched from this session yet. ' +
+        'Point at a raw CSV and press Run — progress streams here.</p>';
+      return;
+    }
+    let head = "";
+    if (s.run_id) {
+      const badge = s.active
+        ? '<span class="pill run">running · ' + (s.elapsed_s || 0) + 's</span>'
+        : (s.exit_code === 0
+            ? '<span class="pill ok">completed</span>'
+            : '<span class="pill bad">failed · exit ' + s.exit_code + '</span>');
+      head = '<div class="runhead"><code>' + esc(s.run_id) + '</code> ' + badge +
+        (s.raw ? ' <span class="muted">' + esc(s.raw.split(/[\\\/]/).pop()) + '</span>' : '') +
+        '</div>';
+    }
+    const prov = (s.provenance || []).slice(0, 4).map(p =>
+      '<tr><td class="k"><code>' + esc(p.run_id) + '</code></td>' +
+      '<td>' + esc(p.status) + '</td>' +
+      '<td class="num">' + fmt(p.events) + '</td>' +
+      '<td class="num">' + fmt(p.intervals) + '</td>' +
+      '<td class="num">' + fmt(p.peak) + '</td>' +
+      '<td>' + (p.oracle === "exact"
+        ? '<span style="color:var(--good)">exact</span>'
+        : '<span style="color:var(--crit)">' + esc(p.oracle) + '</span>') + '</td>' +
+      '<td class="num dim">' + p.seconds + 's</td></tr>').join("");
+    st.innerHTML = head +
+      (prov ? '<table class="kv2 runprov"><thead><tr><th>run</th><th>status</th>' +
+        '<th>events</th><th>intervals</th><th>peak</th><th>oracle</th><th>took</th>' +
+        '</tr></thead><tbody>' + prov + '</tbody></table>' : '');
+    if ((s.log || []).length) {
+      lg.hidden = false;
+      const atEnd = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 24;
+      lg.textContent = s.log.join("\n");
+      if (atEnd) lg.scrollTop = lg.scrollHeight;   // follow, unless the reader scrolled up
+    }
+  }
+
+  async function pollRun(once) {
+    if (state.tab !== "config") { stopCfgRun(); return; }
+    let s;
+    try { s = await (await fetch("/api/pipeline/status")).json(); }
+    catch (_) { return; }
+    paintRun(s);
+    if (!once && s.run_id && !s.active) {
+      stopCfgRun();
+      const d2 = await api("/api/config");     // the tables just changed under us
+      renderDatasets($("#datasets"), d2.datasets || {});
+      renderTable($("#tables"), d2.tables.map(t => ({...t, value: t.table})), [
+        {k:"value", t:"table"}, {k:"rows", t:"rows"},
+        {k:"parts", t:"parts", dim:true}, {k:"size", t:"size", f:v=>esc(v)},
+      ], null);
+    }
+  }
+
+  $("#runbtn").addEventListener("click", async () => {
+    const raw = $("#runraw").value.trim(), content = $("#runcontent").value.trim();
+    if (!raw) { $("#runstate").innerHTML = '<p class="err">raw CSV path is required</p>'; return; }
+    $("#runbtn").disabled = true;
+    const r = await (await fetch("/api/pipeline/run", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({raw, content})})).json();
+    $("#runbtn").disabled = false;
+    if (r.error) { $("#runstate").innerHTML = '<p class="err">' + esc(r.error) + '</p>'; return; }
+    $("#runlog").hidden = false; $("#runlog").textContent = "launching " + r.run_id + " …";
+    stopCfgRun();
+    _cfgRunTimer = setInterval(pollRun, 2500);
+  });
+
+  try {
+    const s0 = await (await fetch("/api/pipeline/status")).json();
+    paintRun(s0);
+    // A run started from a terminal (or before a page reload) is still ours
+    // to narrate: if anything is in flight, follow it.
+    if (s0.active) { stopCfgRun(); _cfgRunTimer = setInterval(pollRun, 2500); }
+  } catch (_) {}
   perf(d);
 }
+
+let _cfgRunTimer = null;
+function stopCfgRun() { if (_cfgRunTimer) { clearInterval(_cfgRunTimer); _cfgRunTimer = null; } }
 
 async function viewIngest(main) {
   main.innerHTML = '<div class="grid" id="g">' +
