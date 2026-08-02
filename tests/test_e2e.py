@@ -74,19 +74,25 @@ def test_api_endpoints(app, path):
     assert "error" not in body, f"{path} returned {body.get('error')}"
 
 
-def test_headline_numbers_are_the_verified_ones(app):
-    """The whole submission rests on these three figures."""
+def test_headline_numbers_are_internally_consistent(app):
+    """Dataset-relative on purpose: judging day swaps the data under us.
+
+    Foreground-only counts a strict subset of the naive overlap, so
+    fg < naive must hold on ANY dataset -- and equality means the model
+    silently applied nothing, which is also a failure.
+    """
     d = app.request.get(BASE + "/api/series", timeout=120000).json()
-    assert d["nv"]["peak"] == 3743, d["nv"]["peak"]
-    assert d["fg"]["peak"] == 3090, d["fg"]["peak"]
-    assert d["overcount"] == 653
-    assert d["overcount_pct"] == 17.4
+    nv, fg = d["nv"]["peak"], d["fg"]["peak"]
+    assert fg > 0, "foreground peak is zero"
+    assert fg < nv, f"foreground {fg} not below naive {nv}"
+    assert d["overcount"] == nv - fg
+    assert d["overcount_pct"] == round((nv - fg) / nv * 100, 1)
 
 
 def test_oracle_parity_table_intact(app):
     d = app.request.get(BASE + "/api/overview", timeout=120000).json()
-    assert d["intervals"] == 35902, d["intervals"]
-    assert d["events"] == 905558, d["events"]
+    assert d["intervals"] > 0, "no intervals"
+    assert d["events"] > d["intervals"], (d["events"], d["intervals"])
 
 
 # --------------------------------------------------------------------------
@@ -329,8 +335,9 @@ def test_deck_content_fits_inside_slides(app):
 def test_landing_pulls_live_figures(app):
     app.goto(BASE, wait_until="load")
     app.wait_for_timeout(6000)
-    assert app.locator("#f-naive").inner_text().replace(",", "") == "3743"
-    assert app.locator("#f-fg").inner_text().replace(",", "") == "3090"
+    naive = int(app.locator("#f-naive").inner_text().replace(",", ""))
+    fg = int(app.locator("#f-fg").inner_text().replace(",", ""))
+    assert fg > 0 and naive > fg, (naive, fg)
     note = app.locator("#gap-note").inner_text()
     assert "phantom viewers" in note, note
     assert app.locator("#gapchart path").count() >= 2, "hero chart did not draw"

@@ -77,6 +77,33 @@ Both conditions are required, and we tested the alternatives:
 
 ---
 
+## Filters, and the dataset columns that back them
+
+Every filter in the product is backed by a real dataset column and applies to
+the concurrency curve itself, not just the tables beside it. A filter the
+curve ignores is worse than no filter, so each view declares which dimensions
+it can honour (`VIEW_DIMS` in `scripts/dashboard.py`) and renders only those.
+
+| Filter in the UI | Dataset column | Where it lives after ingest |
+|---|---|---|
+| Platform | `platform` (raw events) | carried on every interval and minute-delta row |
+| Country | `country` (raw events) | carried on every interval and minute-delta row |
+| Video type (live / VOD) | `video_type` (content CSV), fallback `content_id` join | carried on every interval and minute-delta row |
+| Category | `category` (content CSV) | resolved through `content_id → sony.content_dim` at query time |
+| Content / title | `content_id` (raw events) → `title` (content CSV) | delta rows keyed by `content_id`; titles joined for display |
+| Language | `audio_language` (raw events) | attributed per session by first *stated* value (`argMinIf`) |
+| Close reason | derived (`VideoSessionEnd` vs heartbeat timeout) | on intervals only — it describes how a session ended, not a slice of concurrency |
+| Time range | `event_timestamp` (ms epoch, raw events) | the minute grid every serving table is keyed on |
+
+Columns the loader recognises but concurrency does not use (`user_id`,
+`app_version`, `player_version`, `subtitle_language`) are loaded and reported.
+Unrecognised extra columns — the surprise set added `session_start_epoch`,
+`video_resolution` and `show_name` — are staged, named in the run report, and
+deliberately ignored rather than silently mis-bound: the loader binds by
+header name, never by position (post-mortem #1).
+
+---
+
 ## Architecture
 
 ```mermaid

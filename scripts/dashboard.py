@@ -57,12 +57,12 @@ INTERVAL_DIMS = SHARED_DIMS + ("category", "close_reason")
 #: is not a slice of concurrency, so it exists only where intervals are the
 #: unit of analysis.
 VIEW_DIMS = {
-    "overview":  ("platform", "video_type", "category"),
+    "overview":  ("platform", "country", "video_type", "category"),
     "liveops":   ("platform",),
     "replay":    ("platform", "country", "video_type"),
-    "ops":       ("platform", "video_type", "category", "close_reason"),
-    "analyst":   ("platform", "video_type", "category"),
-    "product":   ("platform", "video_type", "category", "close_reason"),
+    "ops":       ("platform", "country", "video_type", "category", "close_reason"),
+    "analyst":   ("platform", "country", "video_type", "category"),
+    "product":   ("platform", "country", "video_type", "category", "close_reason"),
     "regions":   ("platform",),
     "pipeline":  (),
     "live":      (),
@@ -426,7 +426,8 @@ WHERE active_start <= toDateTime({q_ident(t1)}, 'UTC')
 
 CATALOG = [
     {"id": "headline", "name": "Headline: naive vs foreground-only",
-     "note": "The whole submission in one query. 3,743 vs 3,090.",
+     "note": "The whole submission in one query: naive session-overlap peak "
+             "vs foreground-only truth, computed live from the loaded data.",
      "sql": """SELECT
   (SELECT max(c) FROM (
      SELECT sum(sum(d)) OVER (ORDER BY m) AS c FROM (

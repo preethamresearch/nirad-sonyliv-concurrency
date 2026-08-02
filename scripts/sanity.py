@@ -70,18 +70,16 @@ def main():
         "WHERE database='sony' AND active"))
 
     print("\n=== the headline figures ===")
-    def headline():
-        peak = int(ch.scalar("""
+    # Dataset-relative, never hardcoded: on judging day the numbers change but
+    # the *relationships* must hold. Foreground-only counts a strict subset of
+    # what the naive overlap counts, so fg <= naive always -- and if the two
+    # are EQUAL the foreground model silently did nothing, which is also a bug.
+    def peaks():
+        fg = int(ch.scalar("""
 SELECT max(running) FROM (
   SELECT sum(sum(delta)) OVER (ORDER BY minute) AS running
   FROM sony.concurrency_minute_delta GROUP BY minute ORDER BY minute)"""))
-        if peak != 3090:
-            raise AssertionError(f"peak is {peak:,}, expected 3,090")
-        return "foreground-only peak 3,090"
-    check("peak concurrency", headline)
-
-    def naive():
-        p = int(ch.scalar("""
+        nv = int(ch.scalar("""
 SELECT max(c) FROM (
   SELECT sum(sum(d)) OVER (ORDER BY m) AS c FROM (
     SELECT toDateTime(intDiv(a,60000)*60,'UTC') AS m, 1 AS d FROM
@@ -92,10 +90,15 @@ SELECT max(c) FROM (
       (SELECT min(event_timestamp_ms) a, max(event_timestamp_ms) b
        FROM sony.raw_events GROUP BY video_session_id))
   GROUP BY m ORDER BY m)"""))
-        if p != 3743:
-            raise AssertionError(f"naive peak is {p:,}, expected 3,743")
-        return "naive peak 3,743 · gap 653 (17.4%)"
-    check("naive baseline", naive)
+        if fg <= 0:
+            raise AssertionError("foreground peak is 0 -- no active intervals")
+        if fg > nv:
+            raise AssertionError(f"foreground {fg:,} EXCEEDS naive {nv:,} -- impossible")
+        if fg == nv:
+            raise AssertionError(f"foreground == naive ({fg:,}) -- model applied nothing")
+        gap = nv - fg
+        return f"fg {fg:,} vs naive {nv:,} · gap {gap:,} ({gap/nv*100:.1f}%)"
+    check("peak concurrency (fg < naive)", peaks)
 
     print("\n=== dashboard ===")
     for path in ["/", "/app", "/deck", "/classic",
