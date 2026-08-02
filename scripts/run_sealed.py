@@ -187,8 +187,14 @@ SELECT video_session_id,
        argMinState(content_id, event_timestamp_ms),
        uniqState(toString(platform))
 FROM sony.raw_events GROUP BY video_session_id""")
+    ch.execute("TRUNCATE TABLE sony.event_type_minute")
+    ch.execute("""
+INSERT INTO sony.event_type_minute
+SELECT toDateTime(intDiv(event_timestamp_ms,60000)*60,'UTC'), event_type, count()
+FROM sony.raw_events GROUP BY 1, 2""")
     tr.stage("rebuild_spans",
              rows=int(ch.scalar("SELECT count() FROM sony.session_spans")),
+             event_type_minute=int(ch.scalar("SELECT count() FROM sony.event_type_minute")),
              seconds=round(time.time() - t, 2))
 
     # Data-quality gates. These are the shapes that broke us on the provided

@@ -141,6 +141,9 @@ services:
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SK:?set in .env.edge}
     volumes:
       - ./litellm.yaml:/app/config.yaml:ro
+    # Published so the dashboard's decline-watch can narrate through it from
+    # Cloud Run; every request requires the master key, like OTLP's ingest key.
+    ports: ["4000:4000"]
     restart: unless-stopped
 
   # ---- the data tools LibreChat calls -------------------------------------

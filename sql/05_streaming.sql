@@ -204,3 +204,31 @@ WHERE version = 1
    OR video_type != prev_video_type
    OR category != prev_category
 ORDER BY changed_at DESC;
+
+
+-- ---------------------------------------------------------------------
+-- 5. EVENT-TYPE RATE (decline watch)
+--
+-- The decline watch compares error / rebuffer / close / start rates across
+-- two 15-minute windows. Asking raw_events costs a full scan per refresh
+-- (its sort key leads with session, so a time predicate cannot prune) --
+-- measured at 6,999,168 rows read for a 30-minute question. This summing
+-- MV answers the same question from (minute x event_type) rows: bounded by
+-- the window, incremental on insert, and the backfill is one scan ever.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS sony.event_type_minute
+(
+    minute      DateTime('UTC'),
+    event_type  LowCardinality(String),
+    events      UInt64
+)
+ENGINE = SummingMergeTree
+ORDER BY (minute, event_type);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sony.event_type_minute_mv
+TO sony.event_type_minute AS
+SELECT toDateTime(intDiv(r.event_timestamp_ms, 60000) * 60, 'UTC') AS minute,
+       r.event_type AS event_type,
+       toUInt64(count()) AS events
+FROM sony.raw_events AS r
+GROUP BY minute, event_type;

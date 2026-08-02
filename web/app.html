@@ -2706,6 +2706,11 @@ async function viewLiveOps(main) {
     tile("Peak", "&hellip;", "in window", "s1") +
     tile("Rebuffer rate", "&hellip;", "of sessions affected") +
     tile("Error rate", "&hellip;", "of sessions affected") +
+    card("Concurrency decline watch",
+      "The signals are measured in ClickHouse, the verdict is a declared rule over them, " +
+      "and the narrative is written by Gemini through LiteLLM from those signals only — " +
+      "the model sees nothing it could invent from. Alerts also land in ClickStack as OTel events.",
+      '<div id="decline">' + skeleton(2) + '</div>', "col-12") +
     card("Session churn",
       "Opens and closes per minute, drawn from the delta stream itself — the +1 and −1 " +
       "that build the concurrency curve. Net churn is what capacity has to absorb.",
@@ -2749,6 +2754,35 @@ async function viewLiveOps(main) {
   chartIncidents($("#incidents"), d.error_timeline);
   chartQoE($("#qoe"), d.platforms);
   chartStack($("#stack"), d.closes);
+
+  api("/api/decline").then(dw => {
+    const host = $("#decline");
+    if (!host) return;
+    const s = dw.signals || {};
+    const tone = dw.status === "ok" ? "ok" : "bad";
+    const causeLabel = {system_issue: "system issue", asset_ended: "asset ended",
+                        engagement_drop: "engagement drop"}[dw.cause] || dw.cause;
+    host.innerHTML =
+      '<div class="verdict ' + tone + '">' +
+        (dw.status === "ok" ? "No material decline" :
+          "ALERT · " + esc(causeLabel) + " · " + s.decline_pct + "% off the 30-min peak") +
+      '</div>' +
+      '<p style="margin:10px 0 12px;line-height:1.6">' + esc(dw.narrative || "") +
+        ' <span class="dim">— ' + esc(dw.narrated_by || "") + '</span></p>' +
+      '<table class="kv2"><tbody>' +
+      [["Current / 30-min peak", fmt(s.current) + " / " + fmt(s.peak_30m)],
+       ["Errors vs baseline", s.error_ratio_vs_baseline + "×"],
+       ["Rebuffering vs baseline", s.rebuffer_ratio_vs_baseline + "×"],
+       ["Session closes vs baseline", s.session_end_ratio_vs_baseline + "×"],
+       ["New sessions vs baseline", s.new_session_ratio_vs_baseline + "×"],
+       ["Rule thresholds", "alert at " + dw.thresholds.decline_pct + "% decline · signal ratio " +
+         dw.thresholds.signal_ratio + "×"]].map(kv =>
+        '<tr><td class="k">' + esc(kv[0]) + '</td><td class="v">' + esc(String(kv[1])) +
+        '</td></tr>').join("") + '</tbody></table>';
+  }).catch(() => {
+    const host = $("#decline");
+    if (host) host.innerHTML = '<p class="err">decline watch unavailable</p>';
+  });
 
   $("#sig").innerHTML = '<table><tbody>' +
     '<tr><td>Dropped frames</td><td class="strong">' + fmt(d.dropped_frames) + '</td></tr>' +

@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -587,6 +588,146 @@ def playground(args):
         "endpoint": ch.config()["host"],
     }
 
+
+
+def decline_watch(args):
+    """Concurrency-decline detection with an attributed cause.
+
+    The brief's optional use-case, built the same way as everything else:
+    the SIGNALS are measured in ClickHouse, the CLASSIFICATION is a
+    deterministic rule over those signals, and the LLM -- when reachable
+    through LiteLLM, so the call itself is traced into Langfuse -- only
+    narrates the evidence it is handed. If the model is down, the rule-based
+    verdict stands alone; a dead LLM must never mean a dead alert.
+
+    Three causes, from the brief: the asset ended (closes surge, starts
+    collapse, curve falls), a system issue (errors/rebuffering spike while
+    content mix is unchanged), or the content is not engaging (viewers
+    leave early with no error signal).
+    """
+    lo, hi = bounds()
+    t1 = args.get("to") or hi
+    hi_q = q_ident(t1)
+    t_start = time.time()
+
+    # Two adjacent 15-minute windows ending at the watermark: "recent" vs
+    # "baseline". All rates are per-minute so the comparison is fair.
+    jobs = {
+        "curve": f"""
+SELECT anyLast(c) AS current, max(c) AS peak30,
+       argMax(toString(minute), c) AS peak_at
+FROM (SELECT minute, sum(sum(delta)) OVER (ORDER BY minute) AS c
+      FROM sony.concurrency_delta_all
+      WHERE minute <= toDateTime({hi_q},'UTC')
+      GROUP BY minute ORDER BY minute)
+WHERE minute > toDateTime({hi_q},'UTC') - INTERVAL 30 MINUTE""",
+        # Reads the (minute x event_type) summing MV, not raw_events: the
+        # raw table's sort key leads with session, so a time predicate there
+        # cannot prune -- we measured 6,999,168 rows read for this same
+        # question. Against the MV it is bounded by the window: ~200 rows.
+        "events": f"""
+SELECT
+  sumIf(events, event_type = 'VideoError'      AND recent) AS err_recent,
+  sumIf(events, event_type = 'VideoError'      AND NOT recent) AS err_base,
+  sumIf(events, event_type = 'BufferStart'     AND recent) AS buf_recent,
+  sumIf(events, event_type = 'BufferStart'     AND NOT recent) AS buf_base,
+  sumIf(events, event_type = 'VideoSessionEnd' AND recent) AS ends_recent,
+  sumIf(events, event_type = 'VideoSessionEnd' AND NOT recent) AS ends_base,
+  sumIf(events, event_type = 'VideoPlay'       AND recent) AS starts_recent,
+  sumIf(events, event_type = 'VideoPlay'       AND NOT recent) AS starts_base
+FROM (SELECT event_type, events,
+             minute > toDateTime({hi_q},'UTC') - INTERVAL 15 MINUTE AS recent
+      FROM sony.event_type_minute
+      WHERE minute > toDateTime({hi_q},'UTC') - INTERVAL 30 MINUTE
+        AND minute <= toDateTime({hi_q},'UTC'))""",
+    }
+    res, reads = parallel_queries(jobs)
+    cur = res["curve"].strip().split(chr(9))
+    ev = [int(x) for x in res["events"].strip().split(chr(9))]
+    current, peak30 = int(float(cur[0] or 0)), int(float(cur[1] or 0))
+    (err_r, err_b, buf_r, buf_b, ends_r, ends_b, starts_r, starts_b) = ev
+
+    decline_pct = round((peak30 - current) / peak30 * 100, 1) if peak30 else 0.0
+    ratio = lambda r, b: round(r / max(b, 1), 2)
+    signals = {
+        "current": current, "peak_30m": peak30, "peak_at": cur[2],
+        "decline_pct": decline_pct,
+        "error_ratio_vs_baseline": ratio(err_r, err_b),
+        "rebuffer_ratio_vs_baseline": ratio(buf_r, buf_b),
+        "session_end_ratio_vs_baseline": ratio(ends_r, ends_b),
+        "new_session_ratio_vs_baseline": ratio(starts_r, starts_b),
+        "window_utc": {"recent": "last 15 min to " + str(t1),
+                       "baseline": "the 15 min before that"},
+    }
+
+    # Deterministic classification. Thresholds are declared, not buried.
+    if decline_pct < 15:
+        status, cause = "ok", "no material decline"
+    elif signals["error_ratio_vs_baseline"] >= 2 or signals["rebuffer_ratio_vs_baseline"] >= 2:
+        status, cause = "alert", "system_issue"
+    elif signals["session_end_ratio_vs_baseline"] >= 2 and signals["new_session_ratio_vs_baseline"] <= 0.7:
+        status, cause = "alert", "asset_ended"
+    else:
+        status, cause = "alert", "engagement_drop"
+
+    # LLM narration through LiteLLM: traced to Langfuse, and only allowed to
+    # describe the signals above -- it sees nothing else.
+    narrative, narrated_by = None, "rules"
+    llm_url = os.environ.get("LITELLM_URL")
+    llm_key = os.environ.get("LITELLM_KEY")
+    if llm_url and llm_key and status == "alert":
+        try:
+            body = json.dumps({
+                "model": "gemini-3.1-flash-lite",
+                "messages": [{"role": "user", "content":
+                    "You are the on-call note-writer for a video platform. From "
+                    "these measured signals only, write 2 sentences: what is "
+                    "happening and the single most likely cause among "
+                    "asset_ended / system_issue / engagement_drop. Do not invent "
+                    "numbers.\n" + json.dumps(signals)}],
+                "user": "decline-watch"}).encode()
+            req = urllib.request.Request(
+                llm_url.rstrip("/") + "/v1/chat/completions", data=body,
+                headers={"Content-Type": "application/json",
+                         "Authorization": "Bearer " + llm_key})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                narrative = json.load(r)["choices"][0]["message"]["content"].strip()
+                narrated_by = "gemini-3.1-flash-lite via LiteLLM (traced in Langfuse)"
+        except Exception:
+            narrative = None
+    if narrative is None:
+        narrative = {
+            "ok": f"Concurrency is at {current:,} against a 30-minute peak of "
+                  f"{peak30:,} ({decline_pct}% off peak) — within normal decay.",
+            "system_issue": f"Concurrency fell {decline_pct}% from the 30-minute peak while "
+                            f"errors ran {signals['error_ratio_vs_baseline']}x and rebuffering "
+                            f"{signals['rebuffer_ratio_vs_baseline']}x their baseline — "
+                            "consistent with a delivery problem, not audience choice.",
+            "asset_ended": f"Concurrency fell {decline_pct}% with session closes at "
+                           f"{signals['session_end_ratio_vs_baseline']}x baseline and new "
+                           f"sessions at {signals['new_session_ratio_vs_baseline']}x — "
+                           "the audience left together, which is what the end of an asset looks like.",
+            "engagement_drop": f"Concurrency fell {decline_pct}% with no error or rebuffering "
+                               "signal — viewers are leaving individually, which points at the "
+                               "content rather than the platform.",
+        }[cause if status == "alert" else "ok"]
+
+    # The alert is also an OTel event, so it exists in ClickStack where an
+    # operator would actually be paged from -- not only in our own UI.
+    if status == "alert":
+        try:
+            import otel
+            otel.event("alert.concurrency_decline", cause=cause,
+                       decline_pct=decline_pct, current=current, peak_30m=peak30)
+        except Exception:
+            pass
+
+    return {"status": status, "cause": cause, "signals": signals,
+            "narrative": narrative, "narrated_by": narrated_by,
+            "thresholds": {"decline_pct": 15, "signal_ratio": 2.0,
+                           "starts_collapse": 0.7},
+            "latency_ms": round((time.time() - t_start) * 1000, 1),
+            "rows_read": reads}
 
 
 def live_ops(args):
@@ -1555,6 +1696,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, configuration(args))
             if u.path == "/api/pipeline/status":
                 return self._send(200, pipeline_status())
+            if u.path == "/api/decline":
+                return self._send(200, _cached("decline:" + (args.get("to") or ""),
+                                               lambda: decline_watch(args)))
             if u.path == "/api/ingest_monitor":
                 return self._send(200, ingest_monitor(args))
             if u.path == "/api/replay":
