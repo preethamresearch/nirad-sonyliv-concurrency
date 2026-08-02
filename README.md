@@ -396,6 +396,12 @@ sink: at-least-once delivery plus an idempotent sink. A full replay dropped
 | `/deck` | 15-slide deck (print to PDF) |
 | `/classic` | The original single-view dashboard |
 
+### Hosted demo
+
+**https://watchhouse-1045532154243.asia-south1.run.app** — Cloud Run,
+`asia-south1`, serving the judged dataset live from ClickHouse Cloud.
+Landing at `/`, dashboards at `/app`, deck at `/deck`.
+
 ### Hosting: what runs where
 
 The data plane is **ClickHouse Cloud**, which was never local — so the entire
