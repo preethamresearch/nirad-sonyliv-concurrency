@@ -2393,9 +2393,29 @@ function stopLive() { if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = 
 function chartChurn(host, pts) {
   if (!pts.length) { host.innerHTML = '<p class="empty">no session churn in this window</p>'; return; }
   const W = host.clientWidth || 900, H = 190, mid = H / 2;
-  const max = Math.max(1, ...pts.map(p => Math.max(p.opened, p.closed)));
-  const bw = Math.max(0.7, W / pts.length);
-  const bars = pts.map((p, i) => {
+
+  // Over the full range there are more minutes than pixels. Clamping the bar
+  // width to a legible floor without reducing the bar COUNT draws
+  // pts.length * floor px of chart into W px of card -- the overflow. Bucket
+  // to what actually fits instead, carrying the max so a churn spike inside a
+  // bucket still reaches full height rather than being averaged away.
+  const MINW = 0.8;
+  const cap = Math.max(1, Math.floor(W / MINW));
+  let data = pts, span = 1;
+  if (pts.length > cap) {
+    span = Math.ceil(pts.length / cap);
+    data = [];
+    for (let i = 0; i < pts.length; i += span) {
+      const seg = pts.slice(i, i + span);
+      data.push({ minute: seg[0].minute, span: seg.length,
+                  opened: Math.max(...seg.map(s => s.opened)),
+                  closed: Math.max(...seg.map(s => s.closed)) });
+    }
+  }
+
+  const max = Math.max(1, ...data.map(p => Math.max(p.opened, p.closed)));
+  const bw = W / data.length;
+  const bars = data.map((p, i) => {
     const x = i * bw, ho = p.opened / max * (mid - 14), hc = p.closed / max * (mid - 14);
     return '<g class="ch"><rect x="' + x + '" y="' + (mid - ho) + '" width="' +
       Math.max(0.7, bw - .4) + '" height="' + ho + '" fill="var(--s1)"/>' +
@@ -2405,7 +2425,9 @@ function chartChurn(host, pts) {
   host.innerHTML = '<div class="legend">' +
     '<span class="key"><span class="swatch box" style="background:var(--s1)"></span>sessions opened</span>' +
     '<span class="key"><span class="swatch box" style="background:var(--s2)"></span>sessions closed</span>' +
-    '<span class="key">peak ' + fmt(max) + '/min</span></div>' +
+    '<span class="key">peak ' + fmt(max) + '/min</span>' +
+    (span > 1 ? '<span class="key muted">' + fmt(span) +
+      ' min per bar · max</span>' : '') + '</div>' +
     '<svg viewBox="0 0 ' + W + ' ' + H + '">' +
     '<line x1="0" x2="' + W + '" y1="' + mid + '" y2="' + mid + '" stroke="var(--line)"/>' +
     bars + '<rect id="churnhit" x="0" y="0" width="' + W + '" height="' + H +
@@ -2414,11 +2436,12 @@ function chartChurn(host, pts) {
   const hit = svg.querySelector("#churnhit");
   hit.addEventListener("pointermove", ev => {
     const bb = svg.getBoundingClientRect();
-    const i = Math.max(0, Math.min(pts.length - 1,
-      Math.floor((ev.clientX - bb.left) / bb.width * W / bw)));
-    const p = pts[i];
+    const i = Math.max(0, Math.min(data.length - 1,
+      Math.floor((ev.clientX - bb.left) / bb.width * data.length)));
+    const p = data[i];
     showTip(ev.clientX, ev.clientY,
-      '<div class="when">' + esc(p.minute) + ' UTC</div>' +
+      '<div class="when">' + esc(p.minute) + ' UTC' +
+      (p.span > 1 ? ' · ' + fmt(p.span) + ' min' : '') + '</div>' +
       '<div class="r"><span class="k" style="background:var(--s1)"></span><span class="v">' +
       fmt(p.opened) + '</span><span class="n">opened</span></div>' +
       '<div class="r"><span class="k" style="background:var(--s2)"></span><span class="v">' +

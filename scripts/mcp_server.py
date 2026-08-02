@@ -174,6 +174,49 @@ async def _main():
         await server.run(r, w, server.create_initialization_options())
 
 
+def _serve_http(host, port):
+    """Serve the same tools over streamable HTTP.
+
+    stdio is the right transport when the client can spawn the process.
+    LibreChat cannot: it runs in a Linux container and this is a Windows
+    process, so there is no process for it to spawn. Streamable HTTP crosses
+    that boundary without changing a single tool definition -- the transport
+    is the only thing that differs.
+
+    Bound to 0.0.0.0 so the container can reach it over the WSL bridge, and
+    stateless so a container restart does not orphan a session.
+    """
+    import contextlib
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+    manager = StreamableHTTPSessionManager(app=server, json_response=False,
+                                           stateless=True)
+
+    async def handle(scope, receive, send):
+        await manager.handle_request(scope, receive, send)
+
+    async def health(_request):
+        return JSONResponse({"ok": True, "server": "sonyliv-concurrency",
+                             "clickhouse": ch.config()["host"]})
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        async with manager.run():
+            print(f"  MCP streamable-http on http://{host}:{port}/mcp", flush=True)
+            yield
+
+    app = Starlette(debug=False, lifespan=lifespan, routes=[
+        Route("/health", health),
+        Mount("/mcp", app=handle),
+    ])
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         if not ch.ping():
@@ -183,5 +226,10 @@ if __name__ == "__main__":
         print("\ncompare_to_naive  platform=ANDROID_PHONE video_type=live:")
         print(asyncio.run(call_tool("compare_to_naive",
               {"platform": "ANDROID_PHONE", "video_type": "live"}))[0].text)
+    elif "--http" in sys.argv:
+        port = 8765
+        if "--port" in sys.argv:
+            port = int(sys.argv[sys.argv.index("--port") + 1])
+        _serve_http("0.0.0.0", port)
     else:
         asyncio.run(_main())
