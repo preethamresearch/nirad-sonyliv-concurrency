@@ -3,26 +3,31 @@
 **Foreground-only concurrency at streaming scale** · Team Nirad · Click-a-thon 2026 · SonyLIV track
 
 > **In one line:** counting a session from its first event to its last over-reports peak
-> concurrent viewers by **17.4%** — 653 people who were paused, backgrounded, or already gone.
+> concurrent viewers — on the judged dataset by **21.4%**: 5,151 "viewers" who were
+> paused, backgrounded, or already gone.
+
+**On the judged (unseen-day) dataset — 7,000,000 events, one command, zero code changes:**
 
 | | |
 |---|---|
-| **Reported peak** (session overlap) | 3,743 |
-| **Actually watching** (`intent ∧ alive`) | **3,090** |
-| **Phantom audience** | **653 — 17.4%** |
-| Verified against an independent oracle | 35,902 intervals, **0 divergent** |
-| Full pipeline, end to end | **77 s** |
-| On disk | **4.79 MiB** from a 222 MB CSV |
-| Streaming throughput | **2,028 events/s** |
+| **Reported peak** (session overlap) | 24,087 |
+| **Actually watching** (`intent ∧ alive`) | **18,936** |
+| **Phantom audience** | **5,151 — 21.4%** |
+| Verified against an independent oracle | 149,500 intervals, **0 divergent** |
+| Load → verify, end to end | **526 s** (1.82 GB, 44k rows/s in) |
+| Minute-grain curve with filters | **65–223 ms server-side** ([evidence](results/RESULTS.md)) |
+| Sample-dataset study (where the model was built) | peak 3,090 vs naive 3,743 · gap 17.4% |
 
 ```bash
 python scripts/run_sealed.py --raw <dataset.csv> --content <content.csv>   # the whole thing
 python scripts/dashboard.py                                                # localhost:877
 ```
 
-**What makes this different from a dashboard:** an independently written oracle that the query
-path must agree with exactly, a deterministic fault injector that found three bugs which would
-each have produced confidently wrong numbers, and a written record of everything we got wrong.
+**The submission is the model and the serving layer, per the brief; the dashboards
+are its demo surface.** What makes it different from a dashboard: an independently
+written oracle the query path must agree with exactly, a deterministic fault
+injector that found three bugs which would each have produced confidently wrong
+numbers, and a written record of everything we got wrong.
 
 - [The seven bugs we shipped and caught](#what-went-wrong-and-what-it-taught-us)
 - [What we would tell SonyLIV](#what-we-would-propose-to-sonyliv)
@@ -33,6 +38,7 @@ each have produced confidently wrong numbers, and a written record of everything
 
 ## Contents
 
+- [The judges' questions, answered directly](#the-judges-questions-answered-directly)
 - [The model](#the-model) — and the two variants we rejected
 - [Architecture](#architecture)
 - [What went wrong](#what-went-wrong-and-what-it-taught-us) — seven post-mortems
@@ -40,6 +46,44 @@ each have produced confidently wrong numbers, and a written record of everything
 - [What we would rather not report](#what-we-would-rather-not-report)
 - [What we would propose to SonyLIV](#what-we-would-propose-to-sonyliv)
 - [Running it](#running-it)
+
+---
+
+## The judges' questions, answered directly
+
+**"Spot-check the numbers against raw events."** Please do — that is what the
+oracle is. `scripts/oracle.py` is an independently written Python
+implementation that shares no SQL with the pipeline; on the judged dataset
+both produce **exactly 149,500 intervals, zero divergent**. `scripts/verify_against_oracle.py --raw <csv>` reruns the comparison on demand.
+
+**"What do your queries read?"** The serving scan, never raw history. The
+minute curve reads `concurrency_minute_delta` (110,181 rows for 7M events —
+two rows per interval, regardless of duration); `read_rows` is reported in
+the UI header, in [`results/RESULTS.md`](results/RESULTS.md) per query, and
+on every OTel span. The first sort key we chose was wrong and `read_rows` is
+how we caught it (post-mortem in Architecture).
+
+**"Incremental, or recompute?"** Hybrid tiering, honestly labelled. Closed
+sessions are sealed into append-only deltas and hourly checkpoints and are
+never touched again. Open sessions live in a hot tier that is re-derived
+per tick **over the hot window only** — cost proportional to what is open,
+not to retention — and published by atomic `EXCHANGE TABLES`, so a
+dashboard poll never sees a half-built curve. Late heartbeats revise a
+session because the watermark holds finalisation open past the gap
+threshold; `session_spans` and `ingest_rate` update incrementally as MVs on
+insert.
+
+**"How does this behave at 100×?"** The delta model's storage grows with
+*intervals opened*, not watch time — the 100× version of this dataset is
+~22M delta rows, which is a small ClickHouse table. Query reads are bounded
+by checkpoint + range (cost of the window asked, not history), partitions
+prune by month, and ingest scales by adding Kafka consumers because
+partitioning is keyed by session. What breaks first, named honestly: the
+single-consumer sink (measured 2,028 ev/s; the fix is consumer-group
+scale-out, designed and labelled as such) and the hot-window recompute,
+whose ceiling is open-session count — the incremental-compaction path
+(finalise on close or watermark) is exactly the brief's suggested direction
+and our hot tier already implements its first half.
 
 ---
 

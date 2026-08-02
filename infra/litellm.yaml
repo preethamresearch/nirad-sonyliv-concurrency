@@ -1,0 +1,24 @@
+# LiteLLM proxy: LibreChat -> LiteLLM -> Gemini, with the Langfuse callback.
+#
+# This is what puts REAL model telemetry in Langfuse -- prompt/completion
+# token counts, cost, time-to-first-token, per-generation latency. The MCP
+# side traces the data plane (which query ran, what it returned); this
+# traces the model plane. Neither invents anything.
+model_list:
+  - model_name: gemini-3.1-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: gemini-3.1-flash
+    litellm_params:
+      model: gemini/gemini-3.1-flash
+      api_key: os.environ/GEMINI_API_KEY
+  - model_name: gemini-3.1-pro
+    litellm_params:
+      model: gemini/gemini-3.1-pro
+      api_key: os.environ/GEMINI_API_KEY
+
+litellm_settings:
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+  drop_params: true

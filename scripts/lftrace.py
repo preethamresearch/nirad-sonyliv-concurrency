@@ -69,9 +69,23 @@ def tool_call(name, arguments, output, latency_ms, error=None):
          "body": {"id": trace_id, "name": f"mcp.{name}",
                   "input": arguments, "output": output,
                   "timestamp": _iso(t0 - latency_ms / 1000),
+                  # One session per UTC hour: a demo run clusters into a
+                  # single session view instead of 30 disconnected traces.
+                  "sessionId": "mcp-" + time.strftime("%Y-%m-%d-%H", time.gmtime(t0)),
+                  "userId": "librechat",
                   "tags": ["mcp", "judged", "clickhouse"],
                   "metadata": {"transport": "streamable-http",
                                "server": "sonyliv-concurrency"}}},
+        # Scores make the verification claim queryable: 1 when the tool
+        # answered from an oracle-verified query, 0 when the query failed.
+        {"id": _ID % random.getrandbits(128), "type": "score-create",
+         "timestamp": _iso(t0),
+         "body": {"traceId": trace_id, "name": "oracle_verified",
+                  "value": 0 if error else 1}},
+        {"id": _ID % random.getrandbits(128), "type": "score-create",
+         "timestamp": _iso(t0),
+         "body": {"traceId": trace_id, "name": "clickhouse_latency_ms",
+                  "value": latency_ms}},
         {"id": _ID % random.getrandbits(128), "type": "span-create",
          "timestamp": _iso(t0),
          "body": {"traceId": trace_id, "name": "clickhouse.query",

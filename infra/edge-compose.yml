@@ -116,9 +116,31 @@ services:
       JWT_REFRESH_SECRET: ${LIBRECHAT_JWT_REFRESH:-nirad-clickathon-refresh-2026}
       CREDS_KEY: ${LIBRECHAT_CREDS_KEY:?set in .env.edge}
       CREDS_IV: ${LIBRECHAT_CREDS_IV:?set in .env.edge}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-nirad-litellm-2026}
     volumes:
       - ./librechat.yaml:/app/librechat.yaml:ro
     ports: ["3080:3080"]
+    restart: unless-stopped
+
+  # ---- model plane: LibreChat -> LiteLLM -> Gemini, traced to Langfuse ----
+  # LibreChat does not export model telemetry natively; LiteLLM sits in the
+  # call path and reports real token usage, cost and latency per generation.
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm
+    depends_on: [langfuse]
+    networks:
+      default:
+        aliases: [litellm.internal]
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      GEMINI_API_KEY: ${GOOGLE_KEY:?set in .env.edge}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-nirad-litellm-2026}
+      LANGFUSE_HOST: http://langfuse:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PK:?set in .env.edge}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SK:?set in .env.edge}
+    volumes:
+      - ./litellm.yaml:/app/config.yaml:ro
     restart: unless-stopped
 
   # ---- the data tools LibreChat calls -------------------------------------
