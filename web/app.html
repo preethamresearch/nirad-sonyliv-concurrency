@@ -2900,31 +2900,38 @@ const ARCH = `flowchart LR
     DL["concurrency_minute_delta"]
     CP["hourly_checkpoint"]
   end
-  subgraph SERVE["Serving"]
+  subgraph SERVE["Serving — stateless, runs identically on Cloud Run and a laptop"]
     API["Dashboard API"]
-    UI["6 dashboards"]
-    MCP["MCP server"]
+    UI["8 dashboards"]
+  end
+  subgraph CHAT["Chat"]
+    MCP["MCP server<br/>verified query tools"]
+    LC["LibreChat + Gemini"]
   end
   OBS["ClickStack<br/>OTel traces"]
+  LF["Langfuse<br/>LLM traces"]
 
   APP --> K
-  SR -.governs.-> K
+  SR -.registers.-> K
   K --> V --> D --> RAW
   V -- rejected --> DLQ
   D <--> R
-  RAW --> MV --> IV --> DL --> CP
+  RAW --> DRV["Explicit INSERT..SELECT<br/>oracle-parity gated"] --> IV --> DL --> CP
+  RAW --> MV --> SP["session_spans<br/>naive baseline"]
   DL --> API
   CP --> API
-  R --> API
+  SP --> API
   API --> UI
-  API --> MCP
+  DL --> MCP
+  MCP --> LC
   RAW -.traced.-> OBS
   API -.traced.-> OBS
+  LC -.traced.-> LF
 
   classDef built fill:#2a78d6,stroke:#1c5cab,color:#fff;
   classDef designed fill:#f0efec,stroke:#898781,color:#52514e,stroke-dasharray:4 3;
-  class APP,K,V,D,DLQ,R,RAW,IV,DL,CP,API,UI,MCP,OBS built;
-  class SR,MV designed;`;
+  class APP,K,V,D,DLQ,R,RAW,IV,DL,CP,API,UI,MCP,OBS,SR,MV,SP,LC,LF built;
+  class DRV built;`;
 
 const COMPONENTS = [
   ["Kafka / Redpanda", "built", "Durable, replayable ingestion. Keyed by video_session_id so a session never splits across partitions — session reconstruction is order-dependent per key."],
@@ -2934,8 +2941,10 @@ const COMPONENTS = [
   ["ClickHouse", "built", "Landing + serving. Delta model stores 2 rows per interval regardless of duration, against one row per active minute for a grid."],
   ["Serving tables", "built", "concurrency_minute_delta + hourly checkpoints, so a range query costs the range and not the retention."],
   ["ClickStack", "built", "OTel traces on every statement. Query latency and rows-read per span."],
-  ["Materialized views", "designed", "Derivation currently runs as an explicit step, which is what the oracle-parity gate checks. Moving it to MVs makes it incremental on insert — the same SQL, triggered differently."],
-  ["Schema Registry", "designed", "The loader's ALIASES table plus the required-column contract is a registry in miniature: it version-tolerates producer field names and refuses to default a required column. A real registry moves that contract upstream of the producer."],
+  ["Materialized views", "built", "ingest_rate and session_spans update incrementally on insert; the naive baseline reads session_spans (108k rows) instead of re-grouping 7M raw events. Interval derivation stays an explicit step ON PURPOSE — that is the step the oracle-parity gate certifies, and an MV would make it implicit."],
+  ["Schema Registry", "built", "Every distinct producer key-set is fingerprinted into sony.schema_registry with a compatibility verdict — 4 schemas seen, 1 flagged incompatible. The loader's alias table enforces the same contract at batch ingest."],
+  ["MCP + LibreChat + Gemini", "built", "Chat asks questions through MCP tools that wrap the verified queries — the model cannot invent SQL, and a failed query is reported as a failure, never estimated. LLM traces land in Langfuse."],
+  ["Cloud Run + edge split", "built", "The dashboard is stateless over ClickHouse Cloud, so the hosted instance and a laptop are the same claim. Stateful edge services (Kafka, Redis, ClickStack, Langfuse, LibreChat, MCP) ship as one compose file: infra/edge-compose.yml."],
 ];
 
 let _mermaidReady = false;
@@ -2952,7 +2961,7 @@ function loadMermaid() {
 
 async function viewArchitecture(main) {
   main.innerHTML = `<div class="grid">
-    ${card("Pipeline architecture","Solid = running now. Dashed = designed, not built — labelled so a diagram cannot overclaim.",
+    ${card("Pipeline architecture","Every node drawn is running — this diagram is kept at parity with the system, not ahead of it. The one deliberate exception is labelled on the node: interval derivation stays an explicit, oracle-gated step rather than a materialized view.",
       `<div id="diagram" style="overflow-x:auto"></div>`, "col-12")}
     ${card("Why each component is there","", `<div id="components"></div>`, "col-12")}
     ${card("Query playground","Pick one of the project's real queries or write your own. Read-only.",
