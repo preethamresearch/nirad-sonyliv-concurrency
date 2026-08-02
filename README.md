@@ -119,22 +119,69 @@ flowchart LR
   MV --> IV["session_active_intervals"]
   IV --> DL["concurrency_minute_delta"]
   DL --> CP["hourly checkpoints"]
+  RAW --> SP["session_spans MV<br/>naive baseline"]
   DL --> API["Serving API"]
   CP --> API
+  SP --> API
   R --> API
   API --> UI["8 dashboards"]
-  API --> MCP["MCP server"]
+  DL --> MCP["MCP server"]
+  MCP --> LC["LibreChat + Gemini"]
   RAW -. traced .-> OBS["ClickStack / OTel"]
   API -. traced .-> OBS
+  LC -. traced .-> LF["Langfuse"]
 
   classDef built fill:#2a78d6,stroke:#1c5cab,color:#fff;
   classDef design fill:#f0efec,stroke:#898781,color:#52514e,stroke-dasharray:4 3;
-  class APP,K,V,D,DLQ,R,RAW,IV,DL,CP,API,UI,MCP,OBS built;
-  class SR,MV design;
+  class APP,K,V,D,DLQ,R,RAW,IV,DL,CP,API,UI,MCP,OBS,MV,SP,LC,LF built;
+  class SR design;
 ```
 
 Solid = running. Dashed = designed and labelled as such — a diagram that implies
-more than it runs survives exactly one question.
+more than it runs survives exactly one question. (One deliberate exception:
+interval derivation is an explicit `INSERT..SELECT`, not a materialized view,
+because that is the step the oracle-parity gate certifies — the MVs that do
+run incrementally are `ingest_rate` and `session_spans`.)
+
+### Where it runs
+
+```mermaid
+flowchart LR
+  J["Judge's browser"]
+  subgraph GCP["Google Cloud"]
+    subgraph CR["Cloud Run — stateless serving"]
+      W["Watchhouse dashboard<br/>landing · 8 views · deck"]
+    end
+    subgraph VM["GCE VM — the stateful edge (one compose file)"]
+      HX["ClickStack / HyperDX :8080"]
+      LFC["Langfuse :3000"]
+      LCC["LibreChat :3080"]
+      MC["MCP server (internal)"]
+      KR["Redpanda + Redis (internal)"]
+    end
+  end
+  CHC["ClickHouse Cloud<br/>ap-south-1 · db sony<br/>the judged dataset"]
+
+  J --> W
+  J --> HX
+  J --> LFC
+  J --> LCC
+  W --> CHC
+  W -- OTel spans, key-gated --> HX
+  LCC --> MC --> CHC
+  MC -- tool-call traces --> LFC
+  KR --> CHC
+
+  classDef cloud fill:#2a78d6,stroke:#1c5cab,color:#fff;
+  class W,HX,LFC,LCC,MC,KR,CHC cloud;
+```
+
+The dashboard is stateless over ClickHouse Cloud, so the hosted instance and
+a laptop run the same claim; a local `docker compose` of the same
+`infra/edge-compose.yml` reproduces the VM byte for byte. MCP and the brokers
+are deliberately not internet-facing — LibreChat reaches MCP on the compose
+network, and `scripts/sanity_cloud.py` *asserts* that port 8765 is publicly
+unreachable (23 linkage checks, each with its expected value stated).
 
 **Deltas, not a minute grid.** Two rows per interval regardless of duration:
 **31,521 rows against the 145,821** a per-minute explosion needs. A minute grid
@@ -454,15 +501,16 @@ live from ClickHouse Cloud; the stateful OSS stack runs on one GCE VM from
 
 The data plane is **ClickHouse Cloud**, which was never local — so the entire
 analytics product (every dashboard, the query playground, the results report)
-containerises cleanly and runs the same anywhere. What stays at the edge is
-what belongs at the edge:
+containerises cleanly and runs the same anywhere. The stateful OSS stack runs
+on one GCE VM from a single compose file; only the things that need the
+dataset files on disk remain on a laptop:
 
-| Runs on Cloud Run | Stays local (the "edge") |
-|---|---|
-| All 8 dashboard views, landing, deck | Kafka/Redpanda + Redis streaming ingest |
-| Query playground + catalog | Replay producer (`scripts/replay.py`) |
-| Judged results + provenance | Pipeline runs (need dataset files on disk) |
-| Filter/facet/heatmap APIs | HyperDX, Langfuse, LibreChat, MCP server |
+| Cloud Run (stateless) | GCE edge VM (`infra/edge-compose.yml`) | Laptop only |
+|---|---|---|
+| All 8 dashboard views, landing, deck | HyperDX/ClickStack + OTel collector | Pipeline runs (dataset CSVs on disk) |
+| Query playground + catalog | Langfuse (+postgres), LibreChat (+mongo) | Replay producer (`scripts/replay.py`) |
+| Judged results + provenance | MCP server (internal), Redpanda + Redis | |
+| Filter/facet/heatmap APIs | | |
 
 ```bash
 gcloud run deploy watchhouse --source . --region asia-south1 \

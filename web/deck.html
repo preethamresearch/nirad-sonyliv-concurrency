@@ -352,20 +352,23 @@ li b,li strong{color:var(--ink)}
 <!-- 6 ------------------------------------------------------------------ -->
 <section class="slide">
   <div class="kicker">Architecture</div>
-  <h2>Ingest, reconcile, serve.</h2>
+  <h2>Ingest, reconcile, serve — all of it in the cloud.</h2>
   <div class="mono" style="width:100%;font-size:14px;line-height:1.75;margin-top:10px">
-    clients → <b>Kafka</b> (6 partitions, keyed by session) → <b>validator</b> → <b>dedup (Redis)</b> → <b>ClickHouse</b><br>
+    clients → <b>Kafka</b> (6 partitions, keyed by session) → <b>validator</b> → <b>dedup (Redis)</b> → <b>ClickHouse Cloud</b><br>
     &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓ rejected<br>
-    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>DLQ</b> (topic + table, reason attached)<br><br>
-    raw_events → <b>materialized views</b> → active_intervals → <b>minute deltas</b> → <b>hourly checkpoints</b> → API
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<b>DLQ</b> (topic + table, reason attached)<br><br>
+    raw_events → oracle-gated derive → <b>minute deltas</b> + <b>checkpoints</b> + <b>spans MV</b> → API → dashboards · chat<br><br>
+    <span style="opacity:.75">deployed:</span> browser → <b>Cloud Run</b> (stateless dashboard) → <b>ClickHouse Cloud</b> ·
+    <b>GCE VM</b> runs ClickStack + Langfuse + LibreChat + MCP from one compose file;
+    every query traced to HyperDX, every chat tool call traced to Langfuse
   </div>
   <div class="cols3" style="margin-top:24px">
-    <div class="fig"><div class="l">Running</div>
+    <div class="fig"><div class="l">Running — Cloud Run · GCE VM · ClickHouse Cloud</div>
       <div style="margin-top:8px;line-height:2">
         <span class="tag built">Kafka / Redpanda</span> <span class="tag built">Redis</span>
-        <span class="tag built">DLQ</span> <span class="tag built">ClickHouse</span>
+        <span class="tag built">DLQ</span> <span class="tag built">ClickHouse Cloud</span>
         <span class="tag built">Materialized views</span> <span class="tag built">ClickStack</span>
-        <span class="tag built">Langfuse</span> <span class="tag built">LibreChat</span></div></div>
+        <span class="tag built">Langfuse</span> <span class="tag built">LibreChat + MCP</span></div></div>
     <div class="fig"><div class="l">Designed, labelled as such</div>
       <div style="margin-top:8px;line-height:2">
         <span class="tag designed">Schema registry upstream</span>
