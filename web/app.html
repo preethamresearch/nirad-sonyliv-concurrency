@@ -650,6 +650,53 @@ main > .grid { max-width: 1680px; margin: 0 auto; }
 #navscrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 79; }
 #navscrim[hidden] { display: none; }
 
+
+/* --- dataset contracts ---------------------------------------------------- */
+.dsgrid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+@media (max-width: 1100px) { .dsgrid { grid-template-columns: 1fr; } }
+.dscard { border: 1px solid var(--line); border-radius: var(--r); padding: var(--sp-4);
+  background: var(--surface-2); min-width: 0; }
+.dscard.fact { border-left: 3px solid var(--s1); }
+.dscard.dim  { border-left: 3px solid var(--s3); }
+.dshead { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap;
+  margin-bottom: var(--sp-3); }
+.dsrole { font-size: var(--t-cap); letter-spacing: .06em; text-transform: uppercase;
+  font-weight: 700; }
+.dscard.fact .dsrole { color: var(--s1); }
+.dscard.dim  .dsrole { color: var(--s3); }
+.dstable { font-size: var(--t-sm); color: var(--ink-1); }
+.dsrows { margin-left: auto; font-size: var(--t-cap); color: var(--ink-3);
+  font-variant-numeric: tabular-nums; }
+.dsans-h { font-size: var(--t-micro); letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-3); margin-bottom: 5px; }
+.dsans ul { margin: 0 0 var(--sp-3); padding-left: 18px; }
+.dsans li { font-size: var(--t-sm); color: var(--ink-1); margin: 3px 0; }
+.fieldlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 2px 12px; max-height: 190px; overflow: auto; margin-bottom: var(--sp-3); }
+.fld { display: flex; gap: 7px; align-items: baseline; font-size: var(--t-cap);
+  min-width: 0; }
+.fld code { color: var(--ink-1); }
+.fld span { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.dsmeta { border-top: 1px solid var(--line); padding-top: var(--sp-2);
+  font-size: var(--t-cap); color: var(--ink-2); display: grid; gap: 4px; }
+.dsmeta b { color: var(--ink-3); font-weight: 600; margin-right: 5px; }
+.dswhy { color: var(--ink-3); line-height: 1.55; margin-top: 3px; }
+/* --- lineage -------------------------------------------------------------- */
+.lin { display: grid; gap: 0; }
+.linstep { min-width: 0; }
+.linrow { display: flex; align-items: center; gap: var(--sp-2); }
+.lindot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.linstep.fact .lindot { background: var(--s1); }
+.linstep.dim .lindot { background: var(--s3); }
+.linstep.derived .lindot { background: var(--s4); }
+.linstep.serve .lindot { background: var(--brand); box-shadow: 0 0 0 1px var(--line); }
+.linlabel { font-size: var(--t-sm); color: var(--ink-1); font-weight: 600; }
+.linkind { font-size: var(--t-micro); letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-3); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
+.linvia { font-size: var(--t-cap); color: var(--ink-3); margin: 2px 0 0 18px; }
+.linarrow { color: var(--ink-3); margin: 2px 0 2px 2px; font-size: 13px; line-height: 1.1; }
+
 /* --- states -------------------------------------------------------------- */
 .skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
   var(--line-2) 63%); background-size: 400% 100%;
@@ -1866,8 +1913,65 @@ function renderAlerts(host, alerts) {
 let _imTimer = null;
 function stopIngest() { if (_imTimer) { clearInterval(_imTimer); _imTimer = null; } }
 
+/* Two inputs, and what each answers. A fact table and a dimension table have
+   different jobs and different shapes, and a configuration screen that lists
+   them identically hides the thing a reader most needs to understand. */
+function renderDatasets(host, ds) {
+  const order = ["raw_events", "content_dim"];
+  host.innerHTML = '<div class="dsgrid">' + order.map(t => {
+    const d = ds[t];
+    if (!d) return "";
+    const isFact = d.role.indexOf("Fact") === 0;
+    return '<div class="dscard ' + (isFact ? "fact" : "dim") + '">' +
+      '<div class="dshead">' +
+        '<span class="dsrole">' + esc(d.role) + '</span>' +
+        '<code class="dstable">' + esc(d.table) + '</code>' +
+        '<span class="dsrows">' + fmt(d.rows) + ' rows</span>' +
+      '</div>' +
+      '<div class="dsans"><div class="dsans-h">Answers</div><ul>' +
+        d.answers.map(a => '<li>' + esc(a) + '</li>').join("") + '</ul></div>' +
+      '<div class="dsfields"><div class="dsans-h">Fields · ' + d.columns.length + '</div>' +
+        '<div class="fieldlist">' + d.columns.map(c =>
+          '<div class="fld"><code>' + esc(c.name) + '</code><span>' +
+          esc(c.type) + '</span></div>').join("") + '</div></div>' +
+      '<div class="dsmeta">' +
+        '<div><b>Grain</b> ' + esc(d.grain) + '</div>' +
+        '<div><b>Key</b> <code>' + esc(d.key) + '</code></div>' +
+        '<div class="dswhy">' + esc(d.why) + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join("") + '</div>';
+}
+
+/* The derive path as it actually runs. `via` names the mechanism, so the
+   diagram cannot imply a materialized view where an explicit step runs. */
+function renderLineage(host, steps) {
+  host.innerHTML = '<div class="lin">' + steps.map((s, i) =>
+    '<div class="linstep ' + s.kind + '">' +
+      '<div class="linrow">' +
+        '<span class="lindot"></span>' +
+        '<code class="linlabel">' + esc(s.label) + '</code>' +
+        '<span class="linkind">' + esc(s.kind) + '</span>' +
+      '</div>' +
+      '<div class="linvia">' + esc(s.via) + '</div>' +
+      (i < steps.length - 1 ? '<div class="linarrow">&#8595;</div>' : "") +
+    '</div>').join("") + '</div>' +
+    '<p class="note-inline">The dimension is <b>joined, not dictGet</b>: a dictionary is a ' +
+    'node-local cache, and on Cloud a reload without <code>ON CLUSTER</code> refreshes one ' +
+    'node — it returned empty for every row while reporting LOADED. Session aggregates are an ' +
+    'explicit step rather than a materialized view, because the oracle parity gate verifies ' +
+    'that derivation and an MV would make it implicit.</p>';
+}
+
 async function viewConfig(main) {
   main.innerHTML = '<div class="grid" id="g">' +
+    card("The two inputs",
+      "A fact table and a dimension table have different jobs and different shapes. " +
+      "Listing them identically hides the thing a reader most needs to understand.",
+      '<div id="datasets">' + skeleton(4) + '</div>', "col-12") +
+    card("Derive path",
+      "The lineage as it actually runs, with the mechanism named at each step.",
+      '<div id="lineage">' + skeleton(5) + '</div>', "col-12") +
     card("Dataset check",
       "Resolves a CSV header through the loader's alias table and reports what would map, " +
       "what would be ignored and what would abort — without touching the database. " +
@@ -1892,6 +1996,8 @@ async function viewConfig(main) {
     '</div>';
 
   const d = await api("/api/config");
+  renderDatasets($("#datasets"), d.datasets || {});
+  renderLineage($("#lineage"), d.lineage || []);
 
   $("#conn").innerHTML = '<table class="kv2"><tbody>' +
     [["Host", d.connection.host], ["Database", d.connection.database],

@@ -878,6 +878,81 @@ FROM sony.raw_events""",
 
 
 
+
+#: The two inputs, what each answers, and why its shape is what it is. Stated
+#: here so the UI describes the actual contract rather than a guess at it.
+DATASETS = {
+    "raw_events": {
+        "role": "Fact table",
+        "source": "ch-hackathon-raw-data.csv",
+        "grain": "one row per playback event",
+        "answers": ["What happened, to which session, when?",
+                    "Did the viewer play, pause, background or leave?",
+                    "Was the client still alive?"],
+        "key": "ORDER BY (video_session_id, event_timestamp_ms)",
+        "why": "Session-clustered ordering makes each session's events physically "
+               "contiguous, so interval derivation reads one granule range per "
+               "session instead of scattering across the part.",
+    },
+    "content_dim": {
+        "role": "Dimension table (lookup)",
+        "source": "ch-hackathon-content-data.csv",
+        "grain": "one row per content_id",
+        "answers": ["What is this content?", "Is it Live or VOD?",
+                    "Which category?", "What title?"],
+        "key": "ReplacingMergeTree ORDER BY content_id",
+        "why": "Joined, never dictGet: a dictionary is a node-local cache, and on "
+               "Cloud a reload without ON CLUSTER refreshes one node -- dictGet "
+               "returned empty for every row while reporting LOADED.",
+    },
+}
+
+#: The derive path, in order. `via` names the mechanism so the UI does not
+#: imply a materialized view where an explicit step actually runs.
+LINEAGE = [
+    {"id": "raw_events", "label": "raw_events", "kind": "fact",
+     "via": "resilient CSV load, header matched by name"},
+    {"id": "content_dim", "label": "content_dim", "kind": "dim",
+     "via": "full snapshot, truncate-and-load"},
+    {"id": "session_active_intervals", "label": "session_active_intervals",
+     "kind": "derived",
+     "via": "explicit INSERT..SELECT with array algebra, LEFT JOIN content_dim"},
+    {"id": "concurrency_minute_delta", "label": "concurrency_minute_delta",
+     "kind": "derived", "via": "+1 at start, -1 after end -- two rows per interval"},
+    {"id": "concurrency_hourly_checkpoint", "label": "hourly_checkpoint",
+     "kind": "derived", "via": "absolute level per dimension at each hour boundary"},
+    {"id": "serve", "label": "dashboard queries", "kind": "serve",
+     "via": "checkpoint anchor + deltas since -- cost proportional to range"},
+]
+
+
+def datasets_info():
+    """Live column list and row count for each input, merged with its contract."""
+    out = {}
+    jobs = {}
+    for t in DATASETS:
+        jobs[t + "__cols"] = (
+            f"SELECT name, type FROM system.columns WHERE database='sony' "
+            f"AND table='{t}' ORDER BY position")
+        jobs[t + "__n"] = (
+            f"SELECT sum(rows) FROM system.parts WHERE database='sony' "
+            f"AND table='{t}' AND active")
+    res, _ = parallel_queries(jobs)
+    for t, meta in DATASETS.items():
+        cols = []
+        for line in res.get(t + "__cols", "").splitlines():
+            if not line:
+                continue
+            n, ty = line.split(chr(9))
+            cols.append({"name": n, "type": ty.replace(chr(92) + "'", "'")})
+        try:
+            rows = int((res.get(t + "__n") or "0").strip() or 0)
+        except ValueError:
+            rows = 0
+        out[t] = dict(meta, table=t, columns=cols, rows=rows)
+    return out
+
+
 def configuration(args):
     """What this instance is pointed at, and what a given file would load as.
 
@@ -896,6 +971,8 @@ def configuration(args):
         "alias_count": len(load_mod().ALIASES),
         "fault_classes": {k: v[1] for k, v in
                           sorted(fault_mod().FAULTS.items(), key=lambda kv: kv[1][0])},
+        "datasets": datasets_info(),
+        "lineage": LINEAGE,
     }
 
     jobs = {
