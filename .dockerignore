@@ -1,0 +1,18 @@
+# What never leaves the laptop. The image is API + UI; data lives in
+# ClickHouse Cloud, datasets and run artefacts live here.
+.git/
+.gitignore
+.env
+out/
+runs/
+data/
+fixtures/
+tests/
+docs/
+node_modules/
+.pytest_cache/
+test-results/
+__pycache__/
+*.pyc
+*.log
+CLAUDE.md

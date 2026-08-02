@@ -1604,9 +1604,12 @@ def main():
             time.sleep(max(CACHE_TTL_S - 15, 20))
     threading.Thread(target=warm, daemon=True).start()
 
+    # Local runs stay loopback-only; a container must bind all interfaces or
+    # the platform's health checks never reach it. HOST is the one switch.
+    host = os.environ.get("HOST", "127.0.0.1")
     print(f"\n  concurrency dashboard  ->  http://localhost:{port}")
     print(f"  querying               ->  {ch.config()['host']}\n")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

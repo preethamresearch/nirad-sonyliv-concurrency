@@ -396,6 +396,33 @@ sink: at-least-once delivery plus an idempotent sink. A full replay dropped
 | `/deck` | 15-slide deck (print to PDF) |
 | `/classic` | The original single-view dashboard |
 
+### Hosting: what runs where
+
+The data plane is **ClickHouse Cloud**, which was never local — so the entire
+analytics product (every dashboard, the query playground, the results report)
+containerises cleanly and runs the same anywhere. What stays at the edge is
+what belongs at the edge:
+
+| Runs on Cloud Run | Stays local (the "edge") |
+|---|---|
+| All 8 dashboard views, landing, deck | Kafka/Redpanda + Redis streaming ingest |
+| Query playground + catalog | Replay producer (`scripts/replay.py`) |
+| Judged results + provenance | Pipeline runs (need dataset files on disk) |
+| Filter/facet/heatmap APIs | HyperDX, Langfuse, LibreChat, MCP server |
+
+```bash
+gcloud run deploy watchhouse --source . --region asia-south1 \
+  --allow-unauthenticated \
+  --set-env-vars CH_HOST=<host>,CH_PORT=8443,CH_SECURE=1,CH_USER=default,CH_DB=sony \
+  --set-secrets CH_PASSWORD=watchhouse-ch-password:latest
+```
+
+The image (`Dockerfile`) is stdlib-only Python — the kafka/redis/OTel imports
+are lazy and belong to the local streaming demo. No `.env` ships in the image;
+credentials arrive as environment variables, the password from Secret Manager.
+The cloud instance and a laptop instance can serve simultaneously — they are
+stateless over the same ClickHouse.
+
 ---
 
 MIT licensed. Built for Click-a-thon 2026.
