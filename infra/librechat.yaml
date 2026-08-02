@@ -30,6 +30,9 @@ mcpServers:
     type: streamable-http
     url: http://mcp.internal:8765/mcp/
     timeout: 60000
+    # Surface the server as a selectable chip in the chat input, so grounding
+    # is one click in a plain chat rather than buried in the agent builder.
+    chatMenu: true
     serverInstructions: >-
       Tools return JSON from oracle-verified ClickHouse queries over the
       judged dataset. If a tool returns an error, say the query failed --
