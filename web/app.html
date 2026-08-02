@@ -1483,6 +1483,7 @@ async function viewOverview(main) {
   g[3].querySelector(".value").textContent = fmt1(s.fg.avg);
   g[3].querySelector(".note").textContent = fmt(s.minutes) + " minutes";
   chartConcurrency($("#chart"), s);
+  chartHeatmap($("#heat"), hm.cells);
   chartBars($("#bars"), b.rows, "peak", "platform", "--s1");
   renderTable($("#tbl"), b.rows, [
     {k:"value", t:"platform"}, {k:"peak", t:"peak"}, {k:"sessions", t:"sessions"},
