@@ -697,6 +697,18 @@ main > .grid { max-width: 1680px; margin: 0 auto; }
 .linvia { font-size: var(--t-cap); color: var(--ink-3); margin: 2px 0 0 18px; }
 .linarrow { color: var(--ink-3); margin: 2px 0 2px 2px; font-size: 13px; line-height: 1.1; }
 
+
+.rpstat { display: flex; align-items: center; gap: 9px; font-size: var(--t-sm);
+  font-weight: 600; padding: 8px 11px; border-radius: var(--r-sm);
+  margin-bottom: var(--sp-3); border: 1px solid var(--line); }
+.rpstat.live { color: var(--good);
+  background: color-mix(in srgb, var(--good) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--good) 32%, transparent); }
+.rpstat.idle { color: var(--ink-3); background: var(--surface-2); }
+.rpdot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.rpstat.live .rpdot { animation: pulse2 1.6s infinite; }
+@keyframes pulse2 { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+
 /* --- states -------------------------------------------------------------- */
 .skel { background: linear-gradient(90deg, var(--line-2) 25%, var(--surface-2) 37%,
   var(--line-2) 63%); background-size: 400% 100%;
@@ -807,6 +819,8 @@ const fmt1 = n => n == null ? "--" : n.toLocaleString(undefined,{minimumFraction
    previous step raises, and the sidebar numbers them so a first-time reader
    knows there is an order and where they are in it. */
 const TABS = [
+  {id:"replay",   grp:"Monitor", name:"Replay",
+   desc:"Ingest a live-event day and watch the concurrency curve build"},
   {id:"ingest",   grp:"Monitor", name:"Ingestion",
    desc:"Pipeline flow, insert batches, alerts and logs"},
   {id:"liveops",  grp:"Monitor", name:"Live Operations",
@@ -1219,6 +1233,16 @@ function predicatePreview() {
 function renderRange() {
   const el = $("#rangeout");
   if (!el || !OV) return;
+  // On Replay the chart spans what has been ingested so far, so the toolbar
+  // must show that span rather than a preset it does not govern.
+  if (state.tab === "replay") {
+    const s = window._replaySpan;
+    el.innerHTML = s
+      ? '<b>' + esc(s.from) + '</b> → <b>' + esc(s.to) +
+        '</b> UTC <span class="dur">ingested</span>'
+      : '<span class="dur">waiting for events</span>';
+    return;
+  }
   const from = state.from || OV.bounds[0];
   const to   = state.to   || OV.bounds[1];
   const a = new Date(String(from).replace(" ", "T") + "Z");
@@ -1324,6 +1348,9 @@ function renderFilters() {
 }
 
 function renderTimeControl() {
+  // The replay window is set by ingestion, not by a preset.
+  if (state.tab === "replay") { $("#ctl-time").innerHTML = ""; $("#ctl-time").hidden = true; return; }
+  $("#ctl-time").hidden = false;
   const cur = PRESETS.find(p => p.id === state.preset);
   const m = menu($("#ctl-time"), "Range", cur ? cur.label : "Full range",
     PRESETS.map(p => ({value: p.id, label: p.label, on: p.id === state.preset})),
@@ -1908,6 +1935,235 @@ function renderAlerts(host, alerts) {
     _alertPage += (+b.dataset.d);
     renderAlerts(host, alerts);
   }));
+}
+
+/* =========================================================================
+   Replay view: the concurrency curve building as the stream arrives.
+
+   This is the demo the brief asks for -- ingest the session stream, watch the
+   curve build as sessions open, heartbeat and close, then filter and have the
+   minute-grain view still answer. The curve is drawn from the replay tables,
+   so it genuinely grows; it is not a pre-computed series revealed slowly.
+   ========================================================================= */
+/* =========================================================================
+   Replay view.
+
+   Polling must UPDATE, not repaint. The first version rebuilt every card's
+   innerHTML each tick, which cleared the SVG and the status table and rebuilt
+   them three seconds later -- visible as a flash, and it destroyed anything
+   the reader was interacting with. Now the chart skeleton is built once and
+   subsequent ticks only set path geometry and text nodes.
+   ========================================================================= */
+let _rpTimer = null;
+let _rpBuilt = false;
+function stopReplay() {
+  if (_rpTimer) { clearInterval(_rpTimer); _rpTimer = null; }
+  _rpBuilt = false;
+}
+
+function buildReplayChart(host) {
+  const W = host.clientWidth || 900, H = 300;
+  host.innerHTML =
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" id="rpsvg">' +
+      '<g id="rpgrid"></g><g id="rpxlab"></g>' +
+      '<path id="rparea" fill="var(--s1)" opacity=".10" d=""/>' +
+      '<path id="rpline" fill="none" stroke="var(--s1)" stroke-width="2" ' +
+        'stroke-linejoin="round" d=""/>' +
+      '<circle id="rplead" r="5" fill="var(--s1)" cx="-10" cy="-10">' +
+        '<animate attributeName="r" values="4;7;4" dur="1.6s" repeatCount="indefinite"/>' +
+      '</circle>' +
+      '<line id="rpcross" y1="12" y2="264" stroke="var(--axis)" stroke-width="1" ' +
+        'style="display:none"/>' +
+      '<circle id="rpdot" r="4" fill="var(--surface)" stroke="var(--s1)" ' +
+        'stroke-width="2" cx="-10" cy="-10" style="display:none"/>' +
+      '<rect id="rphit" x="56" y="12" width="' + (W - 72) + '" height="264" ' +
+        'fill="transparent"/>' +
+    '</svg>' +
+    '<p class="note-inline" id="rpcap"></p>';
+
+  // Wired once, at build time. Re-attaching on every poll would leak
+  // listeners; reading the series from a dataset slot keeps the handler
+  // valid as the data grows underneath it.
+  const svg = host.querySelector("#rpsvg");
+  const hit = svg.querySelector("#rphit");
+  const cross = svg.querySelector("#rpcross");
+  const dot = svg.querySelector("#rpdot");
+  hit.addEventListener("pointermove", ev => {
+    const pts = host._series || [];
+    if (!pts.length) return;
+    const bb = svg.getBoundingClientRect();
+    const m = {t: 12, r: 16, b: 24, l: 56};
+    const iw = W - m.l - m.r, ih = H - m.t - m.b, n = pts.length;
+    const maxY = Math.max(1, ...pts.map(p => p[1]));
+    const px = (ev.clientX - bb.left) / bb.width * W;
+    let i = Math.round((px - m.l) / (iw || 1) * (n - 1));
+    i = Math.max(0, Math.min(n - 1, i));
+    const x = m.l + (n < 2 ? iw / 2 : i / (n - 1) * iw);
+    const y = m.t + ih - (pts[i][1] / maxY) * ih;
+    cross.style.display = ""; cross.setAttribute("x1", x); cross.setAttribute("x2", x);
+    dot.style.display = ""; dot.setAttribute("cx", x); dot.setAttribute("cy", y);
+    showTip(ev.clientX, ev.clientY,
+      '<div class="when">' + esc(pts[i][0]) + ' UTC</div>' +
+      '<div class="r"><span class="k" style="background:var(--s1)"></span>' +
+      '<span class="v">' + fmt(pts[i][1]) + '</span>' +
+      '<span class="n">concurrent</span></div>');
+  });
+  hit.addEventListener("pointerleave", () => {
+    hideTip(); cross.style.display = "none"; dot.style.display = "none";
+  });
+  return {W: W, H: H};
+}
+
+function updateReplayChart(host, series) {
+  const svg = host.querySelector("#rpsvg");
+  if (!svg) return;
+  host._series = series;          // the hover handler reads the live series
+  const vb = svg.getAttribute("viewBox").split(" ");
+  const W = +vb[2], H = +vb[3], m = {t: 12, r: 16, b: 24, l: 56};
+  const iw = W - m.l - m.r, ih = H - m.t - m.b, n = series.length;
+  const cap = host.querySelector("#rpcap");
+
+  if (!n) {
+    svg.querySelector("#rpline").setAttribute("d", "");
+    svg.querySelector("#rparea").setAttribute("d", "");
+    svg.querySelector("#rplead").setAttribute("cx", -10);
+    if (cap) cap.textContent = "Waiting for the first events to arrive…";
+    return;
+  }
+  const maxY = Math.max(1, ...series.map(p => p[1]));
+  const X = i => m.l + (n < 2 ? iw / 2 : i / (n - 1) * iw);
+  const Y = v => m.t + ih - (v / maxY) * ih;
+  const d = series.map((p, i) =>
+    (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(p[1]).toFixed(1)).join(" ");
+
+  svg.querySelector("#rpline").setAttribute("d", d);
+  svg.querySelector("#rparea").setAttribute("d",
+    d + " L" + X(n - 1).toFixed(1) + " " + (m.t + ih) +
+    " L" + X(0).toFixed(1) + " " + (m.t + ih) + " Z");
+  const lead = svg.querySelector("#rplead");
+  lead.setAttribute("cx", X(n - 1));
+  lead.setAttribute("cy", Y(series[n - 1][1]));
+
+  let grid = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = maxY * i / 4, y = Y(v);
+    grid += '<line x1="' + m.l + '" x2="' + (W - m.r) + '" y1="' + y + '" y2="' + y +
+      '" stroke="var(--line-2)"/><text x="' + (m.l - 8) + '" y="' + (y + 4) +
+      '" text-anchor="end" font-size="11" fill="var(--ink-3)">' +
+      fmt(Math.round(v)) + '</text>';
+  }
+  svg.querySelector("#rpgrid").innerHTML = grid;
+
+  let xl = "";
+  for (let i = 0; i <= 3; i++) {
+    const idx = Math.round(i / 3 * (n - 1));
+    xl += '<text x="' + X(idx) + '" y="' + (H - 6) + '" text-anchor="' +
+      (i === 0 ? "start" : i === 3 ? "end" : "middle") +
+      '" font-size="11" fill="var(--ink-3)">' +
+      esc(String(series[idx][0]).slice(5, 16)) + '</text>';
+  }
+  svg.querySelector("#rpxlab").innerHTML = xl;
+  if (cap) cap.textContent =
+    fmt(n) + " minutes reconstructed · the pulsing point is the ingest watermark";
+}
+
+const RP_FIELDS = [
+  ["rp-wm", "Ingest watermark"], ["rp-sent", "Events sent"],
+  ["rp-stored", "Events stored"], ["rp-open", "Open sessions"],
+  ["rp-peak", "Peak reached"], ["rp-upd", "Last update"],
+];
+
+function buildReplayStatus(host) {
+  host.innerHTML =
+    '<div class="rpstat idle" id="rp-badge"><span class="rpdot"></span>' +
+      '<span id="rp-badge-t">Checking…</span></div>' +
+    '<table class="kv2"><tbody>' +
+    RP_FIELDS.map(f => '<tr><td class="k">' + esc(f[1]) +
+      '</td><td class="v" id="' + f[0] + '">—</td></tr>').join("") +
+    '</tbody></table><p class="note-inline" id="rp-hint"></p>';
+}
+
+async function viewReplay(main) {
+  main.innerHTML = '<div class="grid" id="g">' +
+    tile("Concurrent viewers", "…", "at the ingest watermark", "s1") +
+    tile("Peak so far", "…", "highest reached in this replay") +
+    tile("Still watching", "…", "sessions with no end event yet") +
+    tile("Events ingested", "…", "of the day being replayed") +
+    card("Concurrency as the day replays",
+      "Reconstructed from the replay tables as events arrive, so it genuinely grows. " +
+      "Every row is a real event from the dataset, streamed in event-time order — the " +
+      "speed setting compresses the spacing between them and invents nothing.",
+      '<div id="rpchart"></div>', "col-12") +
+    card("Peak by platform, live",
+      "Filters apply to the live curve exactly as they do to the sealed one — narrowing " +
+      "still answers at minute grain while ingestion is in flight.",
+      '<div id="rpplat">' + skeleton(4) + '</div>', "col-6") +
+    card("Replay status", "", '<div id="rpstate"></div>', "col-6") +
+    '</div>';
+
+  buildReplayChart($("#rpchart"));
+  buildReplayStatus($("#rpstate"));
+  _rpBuilt = true;
+
+  async function tick() {
+    let d;
+    try { d = await api("/api/replay"); }
+    catch (e) { return; }
+    if (state.tab !== "replay") { stopReplay(); return; }
+    const g = $("#g").children;
+    const st = d.state || {};
+    countUp(g[0].querySelector(".value"), d.concurrent_now || 0);
+    g[0].querySelector(".note").textContent = st.watermark
+      ? "at " + String(st.watermark).slice(11, 16) + " UTC (ingest watermark)"
+      : "at the ingest watermark";
+    countUp(g[1].querySelector(".value"), d.peak_now || 0);
+    countUp(g[2].querySelector(".value"), d.open_now || 0);
+    countUp(g[3].querySelector(".value"), d.stored_now || 0);
+    g[3].querySelector(".note").textContent =
+      st.events_sent ? fmt(st.events_sent) + " sent" : "of the day being replayed";
+
+    window._replaySpan = d.series.length
+      ? {from: String(d.series[0][0]).slice(0, 16),
+         to: String(d.series[d.series.length - 1][0]).slice(0, 16)}
+      : null;
+    renderRange();
+    updateReplayChart($("#rpchart"), d.series);
+
+    // The bar chart is small and fully data-driven, so a redraw is honest --
+    // but only when the values actually changed.
+    const sig = d.platforms.map(p => p.platform + ":" + p.peak).join("|");
+    if (sig !== $("#rpplat").dataset.sig) {
+      $("#rpplat").dataset.sig = sig;
+      chartBars($("#rpplat"), d.platforms.map(p =>
+        ({...p, value: p.platform, sessions: p.peak})), "peak", "platform", "--s1");
+    }
+
+    const badge = $("#rp-badge"), bt = $("#rp-badge-t");
+    badge.className = "rpstat " + (st.running ? "live" : "idle");
+    bt.textContent = st.running
+      ? "Replaying at " + fmt(st.speed || 0) + "× event time"
+      : (st.watermark ? "Idle — last replay finished" : "No replay has run");
+    const vals = {
+      "rp-wm": st.watermark || "—",
+      "rp-sent": fmt(st.events_sent || 0),
+      "rp-stored": fmt(d.stored_now || 0),
+      "rp-open": fmt(d.open_now || 0),
+      "rp-peak": fmt(d.peak_now || 0),
+      "rp-upd": (st.at || "").slice(0, 19) || "—",
+    };
+    for (const k in vals) {
+      const el = document.getElementById(k);
+      if (el && el.textContent !== vals[k]) el.textContent = vals[k];
+    }
+    const hint = $("#rp-hint");
+    hint.innerHTML = st.running ? "" :
+      'Start one with <code>python scripts/replay.py --raw &lt;day.csv&gt; --speed 480</code>';
+    perf(d);
+  }
+  await tick();
+  stopReplay();
+  _rpBuilt = true;
+  _rpTimer = setInterval(tick, 3000);
 }
 
 let _imTimer = null;
@@ -2743,7 +2999,8 @@ async function viewRegions(main) {
 
 const VIEWS = {overview:viewOverview, ops:viewOps, analyst:viewAnalyst,
                product:viewProduct, regions:viewRegions, pipeline:viewPipeline,
-               live:viewLive, arch:viewArchitecture, liveops:viewLiveOps, ingest:viewIngest, config:viewConfig};
+               live:viewLive, arch:viewArchitecture, liveops:viewLiveOps, ingest:viewIngest, config:viewConfig,
+               replay:viewReplay};
 
 function perf(r) {
   if (!r) return;
@@ -2792,6 +3049,7 @@ let seq = 0;
 async function refresh() {
   if (state.tab !== "live") stopLive();
   if (state.tab !== "ingest") stopIngest();
+  if (state.tab !== "replay") stopReplay();
   renderFilters();
   const main = $("#main");
   main.classList.add("loading");           // hold the frame; no skeleton, no jump

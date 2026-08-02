@@ -23,7 +23,7 @@ from playwright.sync_api import expect
 BASE = "http://localhost:877"
 
 VIEWS = ["overview", "ops", "analyst", "product", "regions",
-         "liveops", "ingest", "pipeline", "config", "arch"]
+         "replay", "liveops", "ingest", "pipeline", "config", "arch"]
 
 # Views whose first paint issues several Cloud queries need a longer settle.
 SETTLE_MS = 9000
@@ -367,3 +367,53 @@ def test_sidebar_footer_not_clipped(app):
       return f.bottom <= s.bottom + 1 && f.top >= s.top;
     }""")
     assert ok, "sidebar footer is clipped"
+
+
+# --------------------------------------------------------------------------
+# replay -- the demo the brief actually asks for
+# --------------------------------------------------------------------------
+def test_replay_endpoint_shape(app):
+    d = app.request.get(BASE + "/api/replay", timeout=120000).json()
+    for k in ("state", "series", "platforms", "stored_now", "open_now", "peak_now"):
+        assert k in d, f"missing {k}"
+
+
+def test_replay_chart_updates_in_place(app):
+    """Polling must update, not repaint. The first version rebuilt innerHTML
+    every tick, which cleared the SVG and destroyed any hover state."""
+    goto_view(app, "replay")
+    app.wait_for_selector("#rpsvg", timeout=20000)
+    app.evaluate("document.querySelector('#rpsvg').dataset.marker = 'original'")
+    app.wait_for_timeout(7000)          # spans at least one poll
+    survived = app.evaluate(
+        "document.querySelector('#rpsvg')?.dataset.marker === 'original'")
+    assert survived, "the chart node was replaced instead of updated"
+
+
+def test_replay_chart_has_a_tooltip(app):
+    goto_view(app, "replay")
+    app.wait_for_selector("#rphit", timeout=20000)
+    app.evaluate("""() => {
+      const svg = document.querySelector('#rpsvg');
+      const bb = svg.getBoundingClientRect();
+      svg.querySelector('#rphit').dispatchEvent(new PointerEvent('pointermove', {
+        clientX: bb.left + bb.width * 0.6, clientY: bb.top + bb.height * 0.5,
+        bubbles: true}));
+    }""")
+    app.wait_for_timeout(300)
+    assert app.locator("#tip").is_visible(), "no tooltip on the replay chart"
+    assert "concurrent" in app.locator("#tip").inner_text()
+
+
+def test_replay_never_publishes_an_empty_curve(app):
+    """A derive that yields nothing must not be swapped in: an empty curve on
+    screen reads as a crash rather than as 'no data yet'."""
+    seen_data = False
+    for _ in range(6):
+        d = app.request.get(BASE + "/api/replay", timeout=120000).json()
+        n = len(d["series"])
+        if seen_data:
+            assert n > 0, "curve dropped to empty after having data"
+        if n > 0:
+            seen_data = True
+        app.wait_for_timeout(2500)

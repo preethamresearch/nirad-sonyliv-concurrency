@@ -59,6 +59,7 @@ INTERVAL_DIMS = SHARED_DIMS + ("category", "close_reason")
 VIEW_DIMS = {
     "overview":  ("platform", "video_type", "category"),
     "liveops":   ("platform",),
+    "replay":    ("platform", "country", "video_type"),
     "ops":       ("platform", "video_type", "category", "close_reason"),
     "analyst":   ("platform", "video_type", "category"),
     "product":   ("platform", "video_type", "category", "close_reason"),
@@ -1046,6 +1047,78 @@ def plan_for(path):
     }
 
 
+
+def replay_state(args):
+    """Curve, progress and open-session count for a running replay.
+
+    Reads the replay tables rather than the sealed ones, so the series grows as
+    events arrive. Filters apply here exactly as they do to the sealed curve --
+    the point of the demo is that narrowing by platform or country still
+    answers at minute grain while ingestion is in flight.
+    """
+    t_start = time.time()
+    w = where_clause(args, dims=("platform", "country", "video_type"))
+    jobs = {
+        "state": "SELECT toString(ts), events_sent, events_stored, open_sessions, "
+                 "peak, watermark, running, speed FROM sony.replay_state "
+                 "ORDER BY ts DESC LIMIT 1",
+        # Clip at the ingest watermark. A close contributes its -1 to the
+        # minute AFTER the interval ends, so the raw series runs one minute
+        # past what has actually been ingested -- plotting that trailing row
+        # shows a drop to zero that has not happened yet, and reading the tile
+        # off it reports 0 concurrent while people are still watching.
+        "series": f"""
+SELECT toString(minute), toInt32(c) FROM (
+  SELECT minute, sum(sum(delta)) OVER (ORDER BY minute) AS c
+  FROM sony.replay_delta WHERE 1=1 {w}
+  GROUP BY minute ORDER BY minute)
+WHERE minute <= (SELECT toDateTime(ifNull(max(watermark), '2100-01-01 00:00:00'), 'UTC')
+                 FROM sony.replay_state)
+ORDER BY minute""",
+        "stored": "SELECT count() FROM sony.replay_raw",
+        "byplat": f"""
+SELECT platform, max(c) AS peak FROM (
+  SELECT platform, minute,
+         sum(sum(delta)) OVER (PARTITION BY platform ORDER BY minute) AS c
+  FROM sony.replay_delta WHERE 1=1 {w} GROUP BY platform, minute)
+GROUP BY platform ORDER BY peak DESC LIMIT 12""",
+        "open": "SELECT countIf(is_open) FROM sony.replay_intervals",
+    }
+    res, rowcounts = parallel_queries(jobs)
+
+    def rows_of(k):
+        return [l.split(chr(9)) for l in res.get(k, "").splitlines() if l]
+
+    st = rows_of("state")
+    state = {}
+    if st:
+        ts, sent, stored, openn, peak, wm, running, speed = (st[0] + [""] * 8)[:8]
+        state = {"at": ts, "events_sent": int(sent or 0),
+                 "events_stored": int(stored or 0), "open_sessions": int(openn or 0),
+                 "peak": int(peak or 0), "watermark": wm,
+                 "running": running == "1", "speed": int(speed or 0)}
+
+    series = [[m, int(c)] for m, c in rows_of("series")]
+    # Concurrency "now" is the value at the watermark, i.e. the last minute we
+    # have actually ingested -- not the last row in the table.
+    concurrent_now = series[-1][1] if series else 0
+    platforms = [{"platform": p, "peak": int(v)} for p, v in rows_of("byplat")]
+    try:
+        stored_now = int((res.get("stored") or "0").strip() or 0)
+    except ValueError:
+        stored_now = 0
+
+    return {
+        "state": state, "series": series, "platforms": platforms,
+        "concurrent_now": concurrent_now,
+        "stored_now": stored_now,
+        "open_now": int((res.get("open") or "0").strip() or 0),
+        "peak_now": max((c for _m, c in series), default=0),
+        "latency_ms": round((time.time() - t_start) * 1000, 1),
+        "rows_read": sum(rowcounts.values()),
+    }
+
+
 def overview():
     jobs = {
         "server":     "SELECT version()",
@@ -1371,6 +1444,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, configuration(args))
             if u.path == "/api/ingest_monitor":
                 return self._send(200, ingest_monitor(args))
+            if u.path == "/api/replay":
+                return self._send(200, replay_state(args))
             if u.path == "/api/live_ops":
                 return self._send(200, live_ops(args))
             if u.path == "/api/pipeline_live":
